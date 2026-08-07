@@ -124,7 +124,9 @@
     <div id="game-over" class="card" style="display: none;">
         <h2>🎉 GAME KẾT THÚC 🎉</h2>
         <h3 id="winner-text" style="color: #28a745;"></h3>
-        <button onclick="location.reload()">Chơi Lại</button>
+        
+        <button onclick="playAgain()" style="background: #007bff; margin-bottom: 10px;">Chơi Lại (Về Sảnh Chờ)</button>
+        <button class="btn-danger" onclick="leaveRoom()">Thoát Phòng</button>
     </div>
 
     <script src="script.js"></script>

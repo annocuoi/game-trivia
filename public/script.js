@@ -69,7 +69,18 @@ function enterLobby(roomCode, hostStatus) {
 
     document.getElementById('step-room-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
+    document.getElementById('game-over').style.display = 'none';
+    document.getElementById('game-screen').style.display = 'none';
     document.getElementById('room-code-display').innerText = roomCode;
+
+    // Reset nút sẵn sàng của thành viên
+    if (!isHost) {
+        isReady = false;
+        const readyBtn = document.getElementById('ready-btn');
+        readyBtn.innerText = "Sẵn Sàng";
+        readyBtn.style.backgroundColor = "#ffc107";
+        readyBtn.style.color = "black";
+    }
 
     updateRoleUI();
 }
@@ -88,7 +99,6 @@ function updateRoleUI() {
     }
 }
 
-// Thay đổi chủ đề (Chỉ Chủ phòng)
 function changeCategory() {
     if (!isHost) return;
     const category = document.getElementById('category-select').value;
@@ -238,7 +248,6 @@ socket.on('update_leaderboard', (players) => {
 });
 
 socket.on('game_over', (players) => {
-    sessionStorage.removeItem('current_room_code');
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'block';
 
@@ -249,7 +258,36 @@ socket.on('game_over', (players) => {
     }
 });
 
+// Nút Chơi Lại: Quay về Sảnh chờ trong phòng
+function playAgain() {
+    socket.emit('back_to_lobby', { roomCode: currentRoomCode });
+}
+
+socket.on('return_to_lobby', () => {
+    document.getElementById('game-over').style.display = 'none';
+    document.getElementById('lobby-screen').style.display = 'block';
+    
+    // Đưa thành viên về trạng thái chưa sẵn sàng cho ván mới
+    if (!isHost) {
+        isReady = false;
+        const readyBtn = document.getElementById('ready-btn');
+        readyBtn.innerText = "Sẵn Sàng";
+        readyBtn.style.backgroundColor = "#ffc107";
+        readyBtn.style.color = "black";
+    }
+});
+
+// Nút Thoát Phòng: Về bước chọn/tạo phòng (Giữ nguyên Tên)
 function leaveRoom() { 
     sessionStorage.removeItem('current_room_code');
-    location.reload(); 
+    socket.emit('leave_room', { roomCode: currentRoomCode, playerId });
+    
+    currentRoomCode = '';
+    isHost = false;
+    isReady = false;
+
+    document.getElementById('lobby-screen').style.display = 'none';
+    document.getElementById('game-over').style.display = 'none';
+    document.getElementById('game-screen').style.display = 'none';
+    document.getElementById('step-room-screen').style.display = 'block';
 }
