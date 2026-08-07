@@ -1,30 +1,61 @@
 const socket = io();
 
+let currentName = '';
+let currentRoomCode = '';
 let isHost = false;
 let isReady = false;
-let lastChatTime = 0; // Lưu thời điểm gửi chat lần trước để chặn 2 giây
+let lastChatTime = 0;
 
-socket.on('set_as_host', () => {
-    isHost = true;
-    document.getElementById('host-controls').style.display = 'block';
-    document.getElementById('player-controls').style.display = 'none';
-});
-
-function joinGame() {
+// Bước 1 -> Bước 2
+function goToRoomChoice() {
     const name = document.getElementById('username').value.trim();
     if (!name) {
-        alert('Vui lòng nhập tên!');
+        document.getElementById('name-error').innerText = 'Vui lòng nhập tên!';
         return;
     }
 
-    document.getElementById('login-screen').style.display = 'none';
-    document.getElementById('lobby-screen').style.display = 'block';
+    currentName = name;
+    document.getElementById('user-display-name').innerText = currentName;
+    document.getElementById('step-name-screen').style.display = 'none';
+    document.getElementById('step-room-screen').style.display = 'block';
+}
 
-    if (!isHost) {
+// Tạo phòng
+function createRoom() {
+    const roomPassword = document.getElementById('create-pass').value.trim();
+    socket.emit('create_room', { name: currentName, roomPassword });
+}
+
+// Vào phòng
+function joinRoom() {
+    const roomCode = document.getElementById('join-code').value.trim();
+    const roomPassword = document.getElementById('join-pass').value.trim();
+    if (!roomCode) {
+        document.getElementById('room-error').innerText = 'Nhập mã phòng 4 số!';
+        return;
+    }
+    socket.emit('join_room', { roomCode, roomPassword, name: currentName });
+}
+
+socket.on('room_created', (data) => enterLobby(data.roomCode, true));
+socket.on('join_success', (data) => enterLobby(data.roomCode, data.isHost));
+socket.on('room_error', (msg) => document.getElementById('room-error').innerText = msg);
+
+function enterLobby(roomCode, hostStatus) {
+    currentRoomCode = roomCode;
+    isHost = hostStatus;
+
+    document.getElementById('step-room-screen').style.display = 'none';
+    document.getElementById('lobby-screen').style.display = 'block';
+    document.getElementById('room-code-display').innerText = roomCode;
+
+    if (isHost) {
+        document.getElementById('host-controls').style.display = 'block';
+        document.getElementById('player-controls').style.display = 'none';
+    } else {
+        document.getElementById('host-controls').style.display = 'none';
         document.getElementById('player-controls').style.display = 'block';
     }
-
-    socket.emit('join_game', name);
 }
 
 function toggleReady() {
@@ -33,24 +64,23 @@ function toggleReady() {
     
     if (isReady) {
         readyBtn.innerText = "Bỏ Sẵn Sàng";
-        readyBtn.style.backgroundColor = "#dc3545"; // Đỏ
+        readyBtn.style.backgroundColor = "#dc3545";
         readyBtn.style.color = "white";
     } else {
         readyBtn.innerText = "Sẵn Sàng";
-        readyBtn.style.backgroundColor = "#ffc107"; // Vàng
+        readyBtn.style.backgroundColor = "#ffc107";
         readyBtn.style.color = "black";
     }
 
-    socket.emit('toggle_ready');
+    socket.emit('toggle_ready', { roomCode: currentRoomCode });
 }
 
-// Chức năng chat tổng có giới hạn 2 giây
 function sendChat() {
     const now = Date.now();
     const cooldownMsg = document.getElementById('chat-cooldown');
 
     if (now - lastChatTime < 2000) {
-        cooldownMsg.innerText = "Vui lòng đợi 2 giây trước khi gửi tiếp!";
+        cooldownMsg.innerText = "Vui lòng đợi 2 giây!";
         return;
     }
 
@@ -58,7 +88,7 @@ function sendChat() {
     const message = input.value.trim();
     if (!message) return;
 
-    socket.emit('send_chat', message);
+    socket.emit('send_chat', { roomCode: currentRoomCode, message });
     input.value = '';
     lastChatTime = now;
     cooldownMsg.innerText = "";
@@ -70,15 +100,18 @@ socket.on('receive_chat', (data) => {
     p.style.margin = "4px 0";
     p.innerHTML = `<strong>${data.name}:</strong> ${data.message}`;
     chatMessages.appendChild(p);
-    chatMessages.scrollTop = chatMessages.scrollHeight; // Tự động cuộn xuống tin nhắn mới nhất
+    chatMessages.scrollTop = chatMessages.scrollHeight;
 });
 
 function startGame() {
-    socket.emit('start_game');
+    socket.emit('start_game', { roomCode: currentRoomCode });
 }
 
+socket.on('start_error', (msg) => {
+    document.getElementById('lobby-error').innerText = msg;
+});
+
 socket.on('new_question', (data) => {
-    document.getElementById('login-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
 
@@ -94,7 +127,7 @@ function submitAnswer() {
     const answer = input.value;
     if (!answer) return;
 
-    socket.emit('submit_answer', answer);
+    socket.emit('submit_answer', { roomCode: currentRoomCode, answer });
     input.value = '';
 }
 
@@ -120,48 +153,40 @@ socket.on('show_answer', (data) => {
     document.getElementById('answer-input').disabled = true;
 });
 
-socket.on('update_leaderboard', (scores) => {
+socket.on('update_leaderboard', (players) => {
     const playerListLobby = document.getElementById('player-list-lobby');
-    if (playerListLobby) playerListLobby.innerHTML = '';
+    playerListLobby.innerHTML = '';
 
     const scoreList = document.getElementById('score-list');
-    if (scoreList) scoreList.innerHTML = '';
+    scoreList.innerHTML = '';
 
-    let playerCount = 0;
-    const playersArray = Object.entries(scores);
+    document.getElementById('player-count-lobby').innerText = players.length;
 
-    playersArray.forEach(([id, player], index) => {
-        playerCount++;
-        
-        if (playerListLobby) {
-            const liLobby = document.createElement('li');
-            if (index === 0) {
-                liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
-            } else {
-                const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
-                liLobby.innerText = player.name + statusText;
-            }
-            playerListLobby.appendChild(liLobby);
+    players.forEach((player) => {
+        const liLobby = document.createElement('li');
+        if (player.isHost) {
+            liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
+        } else {
+            const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
+            liLobby.innerText = player.name + statusText;
         }
+        playerListLobby.appendChild(liLobby);
 
-        if (scoreList) {
-            const liGame = document.createElement('li');
-            liGame.innerText = `${player.name}: ${player.score} điểm`;
-            scoreList.appendChild(liGame);
-        }
+        const liGame = document.createElement('li');
+        liGame.innerText = `${player.name}: ${player.score} điểm`;
+        scoreList.appendChild(liGame);
     });
-
-    const countElem = document.getElementById('player-count-lobby');
-    if (countElem) countElem.innerText = playerCount;
 });
 
-socket.on('game_over', (scores) => {
+socket.on('game_over', (players) => {
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'block';
 
-    const sortedPlayers = Object.values(scores).sort((a, b) => b.score - a.score);
+    const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
     if (sortedPlayers.length > 0) {
         document.getElementById('winner-text').innerText = 
             `🏆 Chúc mừng ${sortedPlayers[0].name} đã đạt ${sortedPlayers[0].score} điểm!`;
     }
 });
+
+function leaveRoom() { location.reload(); }

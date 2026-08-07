@@ -10,6 +10,10 @@
         .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
         input { width: 90%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
         button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; font-weight: bold; }
+        button:hover { opacity: 0.9; }
+        .btn-success { background: #28a745; }
+        .btn-danger { background: #dc3545; }
+        .error { color: red; margin-top: 8px; font-size: 14px; font-weight: bold; }
         ul { list-style: none; padding: 0; text-align: left; }
         ul li { padding: 8px; border-bottom: 1px solid #eee; }
         #chat-messages { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; font-size: 14px; }
@@ -18,30 +22,52 @@
 </head>
 <body>
 
-    <!-- MÀN HÌNH ĐĂNG NHẬP -->
-    <div id="login-screen" class="card">
-        <h2>🎮 Tham Gia Game Đố Vui</h2>
+    <!-- BƯỚC 1: NHẬP TÊN -->
+    <div id="step-name-screen" class="card">
+        <h2>🎮 Đố Vui Trực Tuyến</h2>
         <input type="text" id="username" placeholder="Nhập tên của bạn...">
-        <button onclick="joinGame()">Vào Game</button>
+        <button onclick="goToRoomChoice()">Tiếp Tục</button>
+        <div id="name-error" class="error"></div>
     </div>
 
-    <!-- MÀN HÌNH SẢNH CHỜ -->
+    <!-- BƯỚC 2: TẠO PHÒNG HOẶC VÀO PHÒNG -->
+    <div id="step-room-screen" class="card" style="display: none;">
+        <p>Xin chào, <strong id="user-display-name"></strong>!</p>
+        
+        <h3>Tạo Phòng Mới</h3>
+        <input type="password" id="create-pass" placeholder="Mật khẩu phòng (không bắt buộc)">
+        <button class="btn-success" onclick="createRoom()">Tạo Phòng</button>
+
+        <hr style="margin: 20px 0;">
+
+        <h3>Vào Phòng Có Sẵn</h3>
+        <input type="text" id="join-code" placeholder="Nhập mã phòng 4 số">
+        <input type="password" id="join-pass" placeholder="Mật khẩu phòng (nếu có)">
+        <button onclick="joinRoom()">Vào Phòng</button>
+        
+        <div id="room-error" class="error"></div>
+    </div>
+
+    <!-- BƯỚC 3: SẢNH CHỜ (LOBBY ROOM) -->
     <div id="lobby-screen" class="card" style="display: none;">
         <h2>Sảnh Chờ</h2>
+        <p style="font-size: 18px;">Mã Phòng: <strong id="room-code-display" style="color: #007bff;"></strong></p>
         <p>Số người trong phòng: <strong id="player-count-lobby">0</strong></p>
         
         <h3>Danh sách người chơi:</h3>
         <ul id="player-list-lobby"></ul>
 
-        <!-- Điều khiển của Chủ phòng -->
+        <!-- Điều khiển Host -->
         <div id="host-controls" style="display: none;">
             <button onclick="startGame()" style="background: #28a745;">Bắt Đầu Chơi (Chủ phòng)</button>
         </div>
 
-        <!-- Điều khiển của Thành viên -->
+        <!-- Điều khiển Thành viên -->
         <div id="player-controls" style="display: none;">
             <button id="ready-btn" onclick="toggleReady()" style="background: #ffc107; color: black;">Sẵn Sàng</button>
         </div>
+
+        <div id="lobby-error" class="error"></div>
 
         <hr style="margin: 20px 0;">
         <h3>Chat Tổng</h3>
@@ -51,9 +77,11 @@
             <button onclick="sendChat()" style="width: auto; margin: 0; padding: 10px 15px;">Gửi</button>
         </div>
         <div id="chat-cooldown" class="cooldown"></div>
+
+        <button class="btn-danger" onclick="leaveRoom()" style="margin-top: 15px;">Rời Phòng</button>
     </div>
 
-    <!-- MÀN HÌNH CHƠI GAME -->
+    <!-- BƯỚC 4: MÀN HÌNH CHƠI GAME -->
     <div id="game-screen" class="card" style="display: none;">
         <div style="font-size: 18px; font-weight: bold; color: #dc3545; margin-bottom: 10px;">
             ⏳ Thời gian: <span id="time">10</span>s
