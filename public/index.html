@@ -8,7 +8,7 @@
     <style>
         body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
         .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
-        input { width: 90%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
+        input, select { width: 90%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
         button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; font-weight: bold; }
         button:hover { opacity: 0.9; }
         .btn-success { background: #28a745; }
@@ -18,6 +18,7 @@
         ul li { padding: 8px; border-bottom: 1px solid #eee; }
         #chat-messages { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; font-size: 14px; }
         .cooldown { color: red; font-size: 13px; margin-top: 4px; }
+        .category-box { background: #eef2ff; border: 1px solid #c7d2fe; padding: 10px; border-radius: 8px; margin: 12px 0; font-weight: bold; color: #3730a3; }
     </style>
 </head>
 <body>
@@ -54,6 +55,26 @@
         <p style="font-size: 18px;">Mã Phòng: <strong id="room-code-display" style="color: #007bff;"></strong></p>
         <p>Số người trong phòng: <strong id="player-count-lobby">0</strong></p>
         
+        <!-- MỤC LỰA CHỌN CHỦ ĐỀ -->
+        <div class="category-box">
+            <label for="category-select" style="display: block; margin-bottom: 5px;">📚 Chủ Đề Câu Hỏi:</label>
+            <div id="host-category-select">
+                <select id="category-select" onchange="changeCategory()">
+                    <option value="Tất cả">🎲 Tất Cả Chủ Đề</option>
+                    <option value="Game Hoa Viên">🌸 Game Hoa Viên</option>
+                    <option value="Lịch sử">📜 Lịch Sử</option>
+                    <option value="Địa lý">🗺️ Địa Lý</option>
+                    <option value="Văn học">📖 Văn Học</option>
+                    <option value="Toán học">📐 Toán Học</option>
+                    <option value="Khoa học vũ trụ">🚀 Khoa Học Vũ Trụ</option>
+                    <option value="Hóa học">🧪 Hóa Học</option>
+                </select>
+            </div>
+            <div id="player-category-display" style="display: none; font-size: 16px; color: #1e40af;">
+                <span id="current-category-text">Tất Cả Chủ Đề</span>
+            </div>
+        </div>
+
         <h3>Danh sách người chơi:</h3>
         <ul id="player-list-lobby"></ul>
 

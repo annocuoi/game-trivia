@@ -13,17 +13,28 @@ function generateRoomCode() {
     return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
+function shuffleArray(array) {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
 io.on('connection', (socket) => {
 
     // 1. Tạo phòng
     socket.on('create_room', (data) => {
-        const { name, roomPassword } = data;
+        const { name, roomPassword, playerId } = data;
         const roomCode = generateRoomCode();
 
         rooms[roomCode] = {
-            hostSocketId: socket.id,
+            hostPlayerId: playerId,
             password: roomPassword || '',
-            players: [{ socketId: socket.id, name, ready: true, score: 0 }],
+            selectedCategory: 'Tất cả',
+            players: [{ socketId: socket.id, playerId, name, ready: true, score: 0, online: true }],
+            questions: [],
             currentQuestion: 0,
             correctCount: 0,
             answeredPlayers: new Set(),
@@ -34,43 +45,86 @@ io.on('connection', (socket) => {
         socket.join(roomCode);
         socket.emit('room_created', { roomCode });
         updateRoomLeaderboard(roomCode);
+        io.to(roomCode).emit('update_category', rooms[roomCode].selectedCategory);
     });
 
     // 2. Vào phòng
     socket.on('join_room', (data) => {
-        const { roomCode, roomPassword, name } = data;
+        const { roomCode, roomPassword, name, playerId } = data;
         const room = rooms[roomCode];
 
         if (!room) return socket.emit('room_error', 'Mã phòng không tồn tại!');
         if (room.password && room.password !== roomPassword) return socket.emit('room_error', 'Sai mật khẩu phòng!');
 
-        const isHost = (socket.id === room.hostSocketId);
-        let player = room.players.find(p => p.socketId === socket.id);
+        const isHost = (playerId === room.hostPlayerId);
+        let player = room.players.find(p => p.playerId === playerId);
         
         if (!player) {
-            player = { socketId: socket.id, name, ready: isHost, score: 0 };
+            player = { socketId: socket.id, playerId, name, ready: isHost, score: 0, online: true };
             room.players.push(player);
+        } else {
+            player.socketId = socket.id;
+            player.online = true;
+            if (player.disconnectTimer) {
+                clearTimeout(player.disconnectTimer);
+                player.disconnectTimer = null;
+            }
         }
 
         socket.join(roomCode);
         socket.emit('join_success', { roomCode, isHost });
         updateRoomLeaderboard(roomCode);
+        socket.emit('update_category', room.selectedCategory);
     });
 
-    // 3. Sẵn sàng
-    socket.on('toggle_ready', (data) => {
-        const { roomCode } = data;
+    // 3. Đổi chủ đề câu hỏi (Chủ phòng)
+    socket.on('change_category', (data) => {
+        const { roomCode, category } = data;
         const room = rooms[roomCode];
         if (room) {
             const player = room.players.find(p => p.socketId === socket.id);
-            if (player && socket.id !== room.hostSocketId) {
+            if (player && player.playerId === room.hostPlayerId) {
+                room.selectedCategory = category;
+                io.to(roomCode).emit('update_category', category);
+            }
+        }
+    });
+
+    // 4. Rejoin
+    socket.on('rejoin_room', (data) => {
+        const { roomCode, playerId } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            const player = room.players.find(p => p.playerId === playerId);
+            if (player) {
+                player.socketId = socket.id;
+                player.online = true;
+                if (player.disconnectTimer) {
+                    clearTimeout(player.disconnectTimer);
+                    player.disconnectTimer = null;
+                }
+                socket.join(roomCode);
+                socket.emit('rejoin_success', { roomCode, isHost: playerId === room.hostPlayerId });
+                updateRoomLeaderboard(roomCode);
+                socket.emit('update_category', room.selectedCategory);
+            }
+        }
+    });
+
+    // 5. Sẵn sàng
+    socket.on('toggle_ready', (data) => {
+        const { roomCode, playerId } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            const player = room.players.find(p => p.playerId === playerId);
+            if (player && playerId !== room.hostPlayerId) {
                 player.ready = !player.ready;
                 updateRoomLeaderboard(roomCode);
             }
         }
     });
 
-    // 4. Chat
+    // 6. Chat
     socket.on('send_chat', (data) => {
         const { roomCode, message } = data;
         const room = rooms[roomCode];
@@ -82,31 +136,43 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 5. Bắt đầu game
+    // 7. Bắt đầu game (Lọc theo chủ đề đã chọn)
     socket.on('start_game', (data) => {
-        const { roomCode } = data;
+        const { roomCode, playerId } = data;
         const room = rooms[roomCode];
         if (room) {
-            if (socket.id !== room.hostSocketId) return;
+            if (playerId !== room.hostPlayerId) return;
 
-            const unready = room.players.find(p => p.socketId !== room.hostSocketId && !p.ready);
+            const unready = room.players.find(p => p.playerId !== room.hostPlayerId && !p.ready);
             if (unready) {
                 return socket.emit('start_error', `Chưa thể bắt đầu! (${unready.name} chưa sẵn sàng)`);
             }
 
             room.currentQuestion = 0;
             room.players.forEach(p => p.score = 0);
+            
+            // Lọc bộ câu hỏi theo chủ đề được chọn
+            let filteredQuestions = questions;
+            if (room.selectedCategory !== 'Tất cả') {
+                filteredQuestions = questions.filter(q => q.category === room.selectedCategory);
+            }
+
+            if (filteredQuestions.length === 0) {
+                return socket.emit('start_error', 'Chủ đề này hiện chưa có câu hỏi!');
+            }
+
+            room.questions = shuffleArray(filteredQuestions);
             sendNextQuestion(roomCode);
         }
     });
 
-    // 6. Trả lời câu hỏi
+    // 8. Trả lời câu hỏi
     socket.on('submit_answer', (data) => {
         const { roomCode, answer } = data;
         const room = rooms[roomCode];
         if (!room || room.answeredPlayers.has(socket.id)) return;
 
-        const currentQ = questions[room.currentQuestion];
+        const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
 
         if (answer.trim().toLowerCase() === currentQ.a.toLowerCase()) {
@@ -136,10 +202,10 @@ io.on('connection', (socket) => {
         const room = rooms[roomCode];
         if (room) {
             const playerList = room.players.map(p => ({
-                name: p.name,
+                name: p.name + (!p.online ? ' (Đang kết nối lại...)' : ''),
                 ready: p.ready,
                 score: p.score,
-                isHost: p.socketId === room.hostSocketId
+                isHost: p.playerId === room.hostPlayerId
             }));
             io.to(roomCode).emit('update_leaderboard', playerList);
         }
@@ -155,10 +221,11 @@ io.on('connection', (socket) => {
         room.answeredPlayers.clear();
         room.timeLeft = 10;
 
-        const q = questions[room.currentQuestion];
+        const q = room.questions[room.currentQuestion];
         io.to(roomCode).emit('new_question', {
             questionNumber: room.currentQuestion + 1,
-            question: q.q
+            question: q.q,
+            category: q.category
         });
 
         io.to(roomCode).emit('timer_update', room.timeLeft);
@@ -179,12 +246,13 @@ io.on('connection', (socket) => {
 
         if (room.timer) clearInterval(room.timer);
 
-        const q = questions[room.currentQuestion];
+        const q = room.questions[room.currentQuestion];
         io.to(roomCode).emit('show_answer', { answer: q.a });
 
         setTimeout(() => {
             room.currentQuestion++;
-            if (room.currentQuestion < questions.length) {
+            // Chơi tối đa 10 câu hoặc hết câu hỏi trong bộ
+            if (room.currentQuestion < Math.min(10, room.questions.length)) {
                 sendNextQuestion(roomCode);
             } else {
                 io.to(roomCode).emit('game_over', room.players);
@@ -195,21 +263,29 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         for (let code in rooms) {
             const room = rooms[code];
-            const idx = room.players.findIndex(p => p.socketId === socket.id);
-            if (idx !== -1) {
-                const wasHost = (socket.id === room.hostSocketId);
-                room.players.splice(idx, 1);
+            const player = room.players.find(p => p.socketId === socket.id);
+            if (player) {
+                player.online = false;
+                updateRoomLeaderboard(code);
 
-                if (room.players.length === 0) {
-                    if (room.timer) clearInterval(room.timer);
-                    delete rooms[code];
-                } else {
-                    if (wasHost) {
-                        room.hostSocketId = room.players[0].socketId;
-                        room.players[0].ready = true;
+                player.disconnectTimer = setTimeout(() => {
+                    const idx = room.players.findIndex(p => p.playerId === player.playerId);
+                    if (idx !== -1 && !room.players[idx].online) {
+                        const wasHost = (player.playerId === room.hostPlayerId);
+                        room.players.splice(idx, 1);
+
+                        if (room.players.length === 0) {
+                            if (room.timer) clearInterval(room.timer);
+                            delete rooms[code];
+                        } else {
+                            if (wasHost) {
+                                room.hostPlayerId = room.players[0].playerId;
+                                room.players[0].ready = true;
+                            }
+                            updateRoomLeaderboard(code);
+                        }
                     }
-                    updateRoomLeaderboard(code);
-                }
+                }, 60000);
             }
         }
     });

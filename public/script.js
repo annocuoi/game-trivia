@@ -1,12 +1,35 @@
 const socket = io();
 
+let playerId = localStorage.getItem('game_player_id');
+if (!playerId) {
+    playerId = 'p_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('game_player_id', playerId);
+}
+
 let currentName = '';
 let currentRoomCode = '';
 let isHost = false;
 let isReady = false;
 let lastChatTime = 0;
 
-// Bước 1 -> Bước 2
+socket.on('connect', () => {
+    const savedRoom = sessionStorage.getItem('current_room_code');
+    if (savedRoom) {
+        socket.emit('rejoin_room', { roomCode: savedRoom, playerId });
+    }
+});
+
+socket.on('rejoin_success', (data) => {
+    currentRoomCode = data.roomCode;
+    isHost = data.isHost;
+    document.getElementById('step-name-screen').style.display = 'none';
+    document.getElementById('step-room-screen').style.display = 'none';
+    document.getElementById('lobby-screen').style.display = 'block';
+    document.getElementById('room-code-display').innerText = currentRoomCode;
+
+    updateRoleUI();
+});
+
 function goToRoomChoice() {
     const name = document.getElementById('username').value.trim();
     if (!name) {
@@ -20,13 +43,11 @@ function goToRoomChoice() {
     document.getElementById('step-room-screen').style.display = 'block';
 }
 
-// Tạo phòng
 function createRoom() {
     const roomPassword = document.getElementById('create-pass').value.trim();
-    socket.emit('create_room', { name: currentName, roomPassword });
+    socket.emit('create_room', { name: currentName, roomPassword, playerId });
 }
 
-// Vào phòng
 function joinRoom() {
     const roomCode = document.getElementById('join-code').value.trim();
     const roomPassword = document.getElementById('join-pass').value.trim();
@@ -34,7 +55,7 @@ function joinRoom() {
         document.getElementById('room-error').innerText = 'Nhập mã phòng 4 số!';
         return;
     }
-    socket.emit('join_room', { roomCode, roomPassword, name: currentName });
+    socket.emit('join_room', { roomCode, roomPassword, name: currentName, playerId });
 }
 
 socket.on('room_created', (data) => enterLobby(data.roomCode, true));
@@ -44,19 +65,40 @@ socket.on('room_error', (msg) => document.getElementById('room-error').innerText
 function enterLobby(roomCode, hostStatus) {
     currentRoomCode = roomCode;
     isHost = hostStatus;
+    sessionStorage.setItem('current_room_code', roomCode);
 
     document.getElementById('step-room-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
     document.getElementById('room-code-display').innerText = roomCode;
 
+    updateRoleUI();
+}
+
+function updateRoleUI() {
     if (isHost) {
         document.getElementById('host-controls').style.display = 'block';
         document.getElementById('player-controls').style.display = 'none';
+        document.getElementById('host-category-select').style.display = 'block';
+        document.getElementById('player-category-display').style.display = 'none';
     } else {
         document.getElementById('host-controls').style.display = 'none';
         document.getElementById('player-controls').style.display = 'block';
+        document.getElementById('host-category-select').style.display = 'none';
+        document.getElementById('player-category-display').style.display = 'block';
     }
 }
+
+// Thay đổi chủ đề (Chỉ Chủ phòng)
+function changeCategory() {
+    if (!isHost) return;
+    const category = document.getElementById('category-select').value;
+    socket.emit('change_category', { roomCode: currentRoomCode, category });
+}
+
+socket.on('update_category', (category) => {
+    document.getElementById('category-select').value = category;
+    document.getElementById('current-category-text').innerText = category === 'Tất cả' ? '🎲 Tất Cả Chủ Đề' : category;
+});
 
 function toggleReady() {
     isReady = !isReady;
@@ -72,7 +114,7 @@ function toggleReady() {
         readyBtn.style.color = "black";
     }
 
-    socket.emit('toggle_ready', { roomCode: currentRoomCode });
+    socket.emit('toggle_ready', { roomCode: currentRoomCode, playerId });
 }
 
 function sendChat() {
@@ -104,7 +146,7 @@ socket.on('receive_chat', (data) => {
 });
 
 function startGame() {
-    socket.emit('start_game', { roomCode: currentRoomCode });
+    socket.emit('start_game', { roomCode: currentRoomCode, playerId });
 }
 
 socket.on('start_error', (msg) => {
@@ -115,7 +157,7 @@ socket.on('new_question', (data) => {
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
 
-    document.getElementById('q-number').innerText = `Câu hỏi ${data.questionNumber}/10`;
+    document.getElementById('q-number').innerText = `Câu hỏi ${data.questionNumber}/10 [${data.category}]`;
     document.getElementById('q-text').innerText = data.question;
     document.getElementById('feedback').innerText = '';
     document.getElementById('answer-input').value = '';
@@ -155,30 +197,48 @@ socket.on('show_answer', (data) => {
 
 socket.on('update_leaderboard', (players) => {
     const playerListLobby = document.getElementById('player-list-lobby');
-    playerListLobby.innerHTML = '';
+    if (playerListLobby) playerListLobby.innerHTML = '';
 
     const scoreList = document.getElementById('score-list');
-    scoreList.innerHTML = '';
+    if (scoreList) scoreList.innerHTML = '';
 
     document.getElementById('player-count-lobby').innerText = players.length;
 
     players.forEach((player) => {
-        const liLobby = document.createElement('li');
-        if (player.isHost) {
-            liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
-        } else {
-            const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
-            liLobby.innerText = player.name + statusText;
+        if (playerListLobby) {
+            const liLobby = document.createElement('li');
+            if (player.isHost) {
+                liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
+            } else {
+                const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
+                liLobby.innerText = player.name + statusText;
+            }
+            playerListLobby.appendChild(liLobby);
         }
-        playerListLobby.appendChild(liLobby);
-
-        const liGame = document.createElement('li');
-        liGame.innerText = `${player.name}: ${player.score} điểm`;
-        scoreList.appendChild(liGame);
     });
+
+    if (scoreList) {
+        const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+        
+        sortedPlayers.forEach((player, index) => {
+            const liGame = document.createElement('li');
+            liGame.style.display = 'flex';
+            liGame.style.justifyContent = 'space-between';
+            liGame.style.padding = '8px 0';
+            
+            let badge = `Hạng ${index + 1}`;
+            if (index === 0) badge = '🥇 Hạng 1';
+            else if (index === 1) badge = '🥈 Hạng 2';
+            else if (index === 2) badge = '🥉 Hạng 3';
+
+            liGame.innerHTML = `<span><b>${badge}:</b> ${player.name}</span> <b>${player.score} điểm</b>`;
+            scoreList.appendChild(liGame);
+        });
+    }
 });
 
 socket.on('game_over', (players) => {
+    sessionStorage.removeItem('current_room_code');
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'block';
 
@@ -189,4 +249,7 @@ socket.on('game_over', (players) => {
     }
 });
 
-function leaveRoom() { location.reload(); }
+function leaveRoom() { 
+    sessionStorage.removeItem('current_room_code');
+    location.reload(); 
+}
