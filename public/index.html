@@ -18,7 +18,6 @@
         ul { list-style: none; padding: 0; text-align: left; }
         ul li { padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
         
-        /* Khung Chat */
         #chat-box { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; font-size: 14px; }
         .chat-row { margin-bottom: 5px; }
         .chat-user { font-weight: bold; color: #007bff; }
@@ -26,42 +25,44 @@
 </head>
 <body>
 
-    <!-- 1. ĐĂNG NHẬP -->
+    <!-- BƯỚC 1: ĐĂNG NHẬP / ĐĂNG KÝ TÀI KHOẢN -->
     <div id="login-screen" class="card">
-        <h2>Đăng Nhập Game</h2>
-        <input type="text" id="username" placeholder="Tên tài khoản">
+        <h2>Tài Khoản Game</h2>
+        <input type="text" id="username" placeholder="Tên đăng nhập">
         <input type="password" id="password" placeholder="Mật khẩu">
-        <button onclick="handleLogin()">Vào Game</button>
+        <button onclick="handleLogin()">Đăng Nhập / Đăng Ký</button>
         <div id="login-error" class="error"></div>
     </div>
 
-    <!-- 2. SẢNH CHÍNH -->
+    <!-- BƯỚC 2: ĐẶT TÊN GAME & VÀO PHÒNG -->
     <div id="lobby-screen" class="card hidden">
-        <h2>Xin chào, <span id="display-user"></span>!</h2>
+        <p style="color:#666;">Tài khoản: <b id="display-user"></b></p>
+        
+        <h3>1. Đặt biệt danh chơi game</h3>
+        <input type="text" id="display-name-input" placeholder="Nhập tên trong game của bạn...">
+
         <hr style="margin: 15px 0;">
-        <h3>Tạo Phòng Mới</h3>
-        <input type="password" id="new-room-pass" placeholder="Mật khẩu phòng (không bắt buộc)">
+        <h3>2. Tạo Phòng Mới</h3>
+        <input type="password" id="new-room-pass" placeholder="Mật khẩu phòng (nếu có)">
         <button class="btn-success" onclick="createRoom()">Tạo Phòng</button>
 
-        <h3 style="margin-top: 20px;">Vào Phòng Có Sẵn</h3>
-        <input type="text" id="join-room-code" placeholder="Mã phòng 4 số">
+        <h3 style="margin-top: 20px;">Hoặc Vào Phòng Có Sẵn</h3>
+        <input type="text" id="join-room-code" placeholder="Nhập Mã phòng 4 số">
         <input type="password" id="join-room-pass" placeholder="Mật khẩu phòng">
         <button onclick="joinRoom()">Tham Gia</button>
         <div id="lobby-error" class="error"></div>
     </div>
 
-    <!-- 3. PHÒNG CHỜ -->
+    <!-- BƯỚC 3: PHÒNG CHỜ -->
     <div id="room-screen" class="card hidden">
         <h2>Phòng: <span id="room-code-display"></span></h2>
         
-        <p style="text-align: left; font-weight: bold; margin-bottom: 5px;">Thành viên:</p>
+        <p style="text-align: left; font-weight: bold; margin-bottom: 5px;">Thành viên trong phòng:</p>
         <ul id="players-list"></ul>
 
-        <!-- Nút Chủ phòng & Thành viên -->
         <button id="start-btn" class="btn-start hidden" onclick="startGame()">Bắt Đầu Chơi</button>
         <button id="ready-btn" class="btn-success hidden" onclick="toggleReady()">Sẵn Sàng</button>
 
-        <!-- Khung Chat -->
         <div id="chat-box"></div>
         <div style="display: flex; gap: 5px;">
             <input type="text" id="chat-input" placeholder="Nhập tin nhắn..." style="margin:0;">
@@ -71,7 +72,7 @@
         <button class="btn-danger" onclick="leaveRoom()" style="margin-top: 15px;">Rời Phòng</button>
     </div>
 
-    <!-- 4. MÀN HÌNH CHƠI GAME -->
+    <!-- BƯỚC 4: MÀN HÌNH CHƠI GAME -->
     <div id="game-screen" class="card hidden">
         <h3 id="question-number">Câu hỏi</h3>
         <h2 id="question-text" style="color: #333; margin: 20px 0;">Nội dung câu hỏi</h2>
@@ -83,8 +84,8 @@
     <script>
         const socket = io();
         let currentUser = '';
+        let currentDisplayName = '';
         let currentRoomCode = '';
-        let isHostUser = false;
 
         window.addEventListener('DOMContentLoaded', () => {
             const savedUser = localStorage.getItem('game_username');
@@ -98,7 +99,7 @@
         function handleLogin() {
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value.trim();
-            if (!username || !password) return document.getElementById('login-error').innerText = 'Nhập đủ tên & mật khẩu!';
+            if (!username || !password) return document.getElementById('login-error').innerText = 'Nhập đủ tài khoản & mật khẩu!';
             socket.emit('login', { username, password });
         }
 
@@ -114,16 +115,23 @@
 
         socket.on('login_error', (msg) => document.getElementById('login-error').innerText = msg);
 
+        function getDisplayName() {
+            const name = document.getElementById('display-name-input').value.trim();
+            return name || currentUser; // Nếu không nhập tên riêng thì dùng tên tài khoản
+        }
+
         function createRoom() {
+            currentDisplayName = getDisplayName();
             const roomPassword = document.getElementById('new-room-pass').value.trim();
-            socket.emit('create_room', { username: currentUser, roomPassword });
+            socket.emit('create_room', { username: currentUser, displayName: currentDisplayName, roomPassword });
         }
 
         function joinRoom() {
+            currentDisplayName = getDisplayName();
             const roomCode = document.getElementById('join-room-code').value.trim();
             const roomPassword = document.getElementById('join-room-pass').value.trim();
             if (!roomCode) return document.getElementById('lobby-error').innerText = 'Nhập mã phòng!';
-            socket.emit('join_room', { roomCode, roomPassword, username: currentUser });
+            socket.emit('join_room', { roomCode, roomPassword, username: currentUser, displayName: currentDisplayName });
         }
 
         socket.on('room_created', (data) => enterRoomUI(data.roomCode, data.isHost));
@@ -132,7 +140,6 @@
 
         function enterRoomUI(code, isHost) {
             currentRoomCode = code;
-            isHostUser = isHost;
             document.getElementById('lobby-screen').classList.add('hidden');
             document.getElementById('room-screen').classList.remove('hidden');
             document.getElementById('room-code-display').innerText = code;
@@ -152,7 +159,7 @@
             players.forEach(p => {
                 const li = document.createElement('li');
                 const status = p.ready ? '<span style="color:green;">✓ Sẵn sàng</span>' : '<span style="color:red;">Chưa ready</span>';
-                li.innerHTML = `<span>• ${p.name}</span> ${status}`;
+                li.innerHTML = `<span>• ${p.displayName}</span> ${status}`;
                 list.appendChild(li);
             });
         });
@@ -165,14 +172,14 @@
             const input = document.getElementById('chat-input');
             const message = input.value.trim();
             if (message) {
-                socket.emit('send_chat', { roomCode: currentRoomCode, username: currentUser, message });
+                socket.emit('send_chat', { roomCode: currentRoomCode, displayName: currentDisplayName, message });
                 input.value = '';
             }
         }
 
         socket.on('receive_chat', (data) => {
             const box = document.getElementById('chat-box');
-            box.innerHTML += `<div class="chat-row"><span class="chat-user">${data.username}:</span> ${data.message}</div>`;
+            box.innerHTML += `<div class="chat-row"><span class="chat-user">${data.displayName}:</span> ${data.message}</div>`;
             box.scrollTop = box.scrollHeight;
         });
 
@@ -195,17 +202,31 @@
         function submitAnswer() {
             const answer = document.getElementById('answer-input').value.trim();
             if (answer) {
-                socket.emit('submit_answer', { roomCode: currentRoomCode, username: currentUser, answer });
+                socket.emit('submit_answer', { roomCode: currentRoomCode, username: currentUser, displayName: currentDisplayName, answer });
             }
         }
 
+        // Nhận phản hồi đúng/sai riêng cho bản thân
+        socket.on('answer_result', (data) => {
+            const msgEl = document.getElementById('game-msg');
+            if (data.correct) {
+                msgEl.style.color = 'green';
+                msgEl.innerText = `🎉 Bạn trả lời đúng! (+${data.points} điểm)`;
+            } else {
+                msgEl.style.color = 'red';
+                msgEl.innerText = '❌ Sai rồi, thử lại xem!';
+            }
+        });
+
+        // Thông báo cho cả phòng biết ai vừa đúng
         socket.on('correct_answer', (data) => {
-            document.getElementById('game-msg').innerText = `🎉 ${data.username} đã trả lời đúng! Đáp án: ${data.correctAnswer}`;
+            const msgEl = document.getElementById('game-msg');
+            msgEl.innerText += `\n👏 ${data.displayName} đã đoán đúng (+${data.points}đ)`;
         });
 
         socket.on('game_over', (players) => {
             let msg = '🏆 GAME KẾT THÚC!\n\nBảng Điểm:\n';
-            players.forEach(p => msg += `${p.name}: ${p.score} điểm\n`);
+            players.sort((a,b) => b.score - a.score).forEach(p => msg += `${p.displayName}: ${p.score} điểm\n`);
             alert(msg);
             location.reload();
         });
