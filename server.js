@@ -21,6 +21,15 @@ function shuffleArray(array) {
     }
     return arr;
 }
+// Hàm chuẩn hóa chuỗi tiếng Việt (chuyển chữ thường, xóa khoảng trắng thừa, chuẩn hóa dấu)
+function cleanString(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()                  // Chuyển thành chữ thường
+        .trim()                         // Xóa khoảng trắng ở đầu và cuối
+        .replace(/\s+/g, ' ')           // Biến nhiều khoảng trắng liên tiếp thành 1 khoảng trắng
+        .normalize('NFC');              // Chuẩn hóa bộ mã dấu tiếng Việt (Hỏa vs Hoả)
+}
 
 io.on('connection', (socket) => {
 
@@ -195,7 +204,8 @@ io.on('connection', (socket) => {
         const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
 
-        if (answer.trim().toLowerCase() === currentQ.a.toLowerCase()) {
+        // Dùng hàm cleanString để so sánh (không phân biệt HOA/thường, dấu cũ/mới, khoảng trắng)
+        if (cleanString(answer) === cleanString(currentQ.a)) {
             room.answeredPlayers.add(socket.id);
             room.correctCount++;
 
