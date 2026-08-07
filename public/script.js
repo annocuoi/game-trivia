@@ -85,6 +85,7 @@ socket.on('new_question', (data) => {
     document.getElementById('q-number').innerText = `Câu hỏi ${data.questionNumber}/10`;
     document.getElementById('q-text').innerText = data.question;
     document.getElementById('feedback').innerText = '';
+    document.getElementById('answer-input').value = '';
     document.getElementById('answer-input').disabled = false;
 });
 
@@ -121,10 +122,10 @@ socket.on('show_answer', (data) => {
 
 socket.on('update_leaderboard', (scores) => {
     const playerListLobby = document.getElementById('player-list-lobby');
-    playerListLobby.innerHTML = '';
+    if (playerListLobby) playerListLobby.innerHTML = '';
 
     const scoreList = document.getElementById('score-list');
-    scoreList.innerHTML = '';
+    if (scoreList) scoreList.innerHTML = '';
 
     let playerCount = 0;
     const playersArray = Object.entries(scores);
@@ -132,24 +133,26 @@ socket.on('update_leaderboard', (scores) => {
     playersArray.forEach(([id, player], index) => {
         playerCount++;
         
-        const liLobby = document.createElement('li');
-        
-        // Người đầu tiên trong danh sách (index === 0) luôn là Chủ Phòng
-        if (index === 0) {
-            liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
-        } else {
-            const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
-            liLobby.innerText = player.name + statusText;
+        if (playerListLobby) {
+            const liLobby = document.createElement('li');
+            if (index === 0) {
+                liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
+            } else {
+                const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
+                liLobby.innerText = player.name + statusText;
+            }
+            playerListLobby.appendChild(liLobby);
         }
-        
-        playerListLobby.appendChild(liLobby);
 
-        const liGame = document.createElement('li');
-        liGame.innerText = `${player.name}: ${player.score} điểm`;
-        scoreList.appendChild(liGame);
+        if (scoreList) {
+            const liGame = document.createElement('li');
+            liGame.innerText = `${player.name}: ${player.score} điểm`;
+            scoreList.appendChild(liGame);
+        }
     });
 
-    document.getElementById('player-count-lobby').innerText = playerCount;
+    const countElem = document.getElementById('player-count-lobby');
+    if (countElem) countElem.innerText = playerCount;
 });
 
 socket.on('game_over', (scores) => {

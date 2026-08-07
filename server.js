@@ -7,203 +7,160 @@ const questions = require('./questions');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const users = {}; 
-const rooms = {}; 
-
-const EXPIRE_TIME = 7 * 24 * 60 * 60 * 1000; 
-
-setInterval(() => {
-    const now = Date.now();
-    for (let username in users) {
-        if (now - users[username].lastActive > EXPIRE_TIME) {
-            delete users[username];
-        }
-    }
-}, 60 * 60 * 1000);
-
-function generateRoomCode() {
-    return Math.floor(1000 + Math.random() * 9000).toString();
-}
+let players = {}; 
+let hostSocketId = null;
+let currentQuestionIndex = 0;
+let timer = null;
+let timeLeft = 10;
+let correctCount = 0;
+let answeredPlayers = new Set();
 
 io.on('connection', (socket) => {
-    socket.on('login', (data) => {
-        const { username, password } = data;
-        if (!username || !password) return socket.emit('login_error', 'Nhập đủ tài khoản & mật khẩu!');
 
-        if (!users[username]) {
-            users[username] = { password, lastActive: Date.now() };
-            socket.emit('login_success', { username });
-        } else if (users[username].password === password) {
-            users[username].lastActive = Date.now();
-            socket.emit('login_success', { username });
-        } else {
-            socket.emit('login_error', 'Sai mật khẩu!');
+    // Tham gia game
+    socket.on('join_game', (name) => {
+        // Người đầu tiên vào sẽ làm Host
+        if (!hostSocketId) {
+            hostSocketId = socket.id;
+            socket.emit('set_as_host');
         }
-    });
 
-    socket.on('create_room', (data) => {
-        const { username, displayName, roomPassword } = data;
-        const roomCode = generateRoomCode();
-
-        rooms[roomCode] = {
-            host: username,
-            password: roomPassword || '',
-            players: [{ username, displayName, ready: true, isHost: true, score: 0 }],
-            currentQuestion: 0,
-            correctCount: 0,
-            answeredPlayers: new Set(),
-            timer: null,
-            timeLeft: 10
+        players[socket.id] = {
+            id: socket.id,
+            name: name,
+            ready: socket.id === hostSocketId, // Host luôn ready
+            score: 0
         };
 
-        socket.join(roomCode);
-        socket.emit('room_created', { roomCode, isHost: true });
+        io.emit('update_leaderboard', players);
     });
 
-    socket.on('join_room', (data) => {
-        const { roomCode, roomPassword, username, displayName } = data;
-        const room = rooms[roomCode];
-
-        if (!room) return socket.emit('join_error', 'Phòng không tồn tại!');
-        if (room.password && room.password !== roomPassword) return socket.emit('join_error', 'Sai mật khẩu phòng!');
-
-        let player = room.players.find(p => p.username === username);
-        const isHost = (username === room.host);
-        
-        if (!player) {
-            player = { username, displayName, ready: isHost, isHost, score: 0 };
-            room.players.push(player);
-        } else {
-            player.displayName = displayName;
-        }
-
-        socket.join(roomCode);
-        socket.emit('join_success', { roomCode, isHost });
-        io.to(roomCode).emit('update_players', room.players);
-    });
-
-    socket.on('toggle_ready', (data) => {
-        const { roomCode, username } = data;
-        const room = rooms[roomCode];
-        if (room) {
-            const player = room.players.find(p => p.username === username);
-            if (player && !player.isHost) {
-                player.ready = !player.ready;
-                io.to(roomCode).emit('update_players', room.players);
-            }
+    // Đổi trạng thái Sẵn Sàng
+    socket.on('toggle_ready', () => {
+        if (players[socket.id] && socket.id !== hostSocketId) {
+            players[socket.id].ready = !players[socket.id].ready;
+            io.emit('update_leaderboard', players);
         }
     });
 
-    socket.on('send_chat', (data) => {
-        const { roomCode, displayName, message } = data;
-        io.to(roomCode).emit('receive_chat', { displayName, message });
-    });
-
-    socket.on('start_game', (data) => {
-        const { roomCode } = data;
-        const room = rooms[roomCode];
-        if (room) {
-            const unreadyPlayer = room.players.find(p => !p.isHost && !p.ready);
-            if (unreadyPlayer) {
-                return socket.emit('start_error', `Chưa thể bắt đầu! (${unreadyPlayer.displayName} chưa sẵn sàng)`);
-            }
-
-            room.currentQuestion = 0;
-            room.players.forEach(p => p.score = 0);
-            io.to(roomCode).emit('game_started');
-            sendNextQuestion(roomCode);
+    // Chat chung
+    socket.on('send_chat', (message) => {
+        if (players[socket.id]) {
+            io.emit('receive_chat', {
+                name: players[socket.id].name,
+                message: message
+            });
         }
     });
 
-    socket.on('submit_answer', (data) => {
-        const { roomCode, username, displayName, answer } = data;
-        const room = rooms[roomCode];
-        if (!room) return;
+    // Bắt đầu game (Chỉ Host mới gọi được)
+    socket.on('start_game', () => {
+        if (socket.id !== hostSocketId) return;
 
-        const currentQ = questions[room.currentQuestion];
+        // Kiểm tra xem có ai chưa sẵn sàng không
+        const unready = Object.values(players).find(p => p.id !== hostSocketId && !p.ready);
+        if (unready) {
+            return socket.emit('receive_chat', { name: 'Hệ thống', message: `❌ Chưa thể bắt đầu! ${unready.name} chưa sẵn sàng.` });
+        }
+
+        currentQuestionIndex = 0;
+        Object.values(players).forEach(p => p.score = 0);
+        sendNextQuestion();
+    });
+
+    // Gửi đáp án
+    socket.on('submit_answer', (answer) => {
+        if (!players[socket.id] || answeredPlayers.has(socket.id)) return;
+
+        const currentQ = questions[currentQuestionIndex];
         if (!currentQ) return;
 
-        if (room.answeredPlayers.has(username)) return;
-
         if (answer.trim().toLowerCase() === currentQ.a.toLowerCase()) {
-            room.answeredPlayers.add(username);
-            room.correctCount++;
+            answeredPlayers.add(socket.id);
+            correctCount++;
 
             let points = 0;
-            if (room.correctCount === 1) points = 3;
-            else if (room.correctCount === 2) points = 2;
-            else if (room.correctCount === 3) points = 1;
+            if (correctCount === 1) points = 3;
+            else if (correctCount === 2) points = 2;
+            else if (correctCount === 3) points = 1;
 
-            const player = room.players.find(p => p.username === username);
-            if (player) player.score += points;
+            players[socket.id].score += points;
 
-            socket.emit('answer_result', { correct: true, points });
-            
-            // Cập nhật điểm và bảng xếp hạng realtime
-            io.to(roomCode).emit('correct_answer', { 
-                displayName, 
-                points, 
-                correctAnswer: currentQ.a,
-                players: room.players 
+            socket.emit('answer_result', {
+                correct: true,
+                rank: correctCount,
+                points: points
             });
 
-            if (room.answeredPlayers.size >= room.players.length) {
-                finishQuestion(roomCode);
+            io.emit('update_leaderboard', players);
+
+            // Tất cả mọi người trả lời xong thì chuyển câu
+            if (answeredPlayers.size >= Object.keys(players).length) {
+                finishQuestion();
             }
         } else {
             socket.emit('answer_result', { correct: false });
         }
     });
 
-    function sendNextQuestion(roomCode) {
-        const room = rooms[roomCode];
-        if (!room) return;
+    function sendNextQuestion() {
+        if (timer) clearInterval(timer);
 
-        if (room.timer) clearInterval(room.timer);
+        correctCount = 0;
+        answeredPlayers.clear();
+        timeLeft = 10;
 
-        room.correctCount = 0;
-        room.answeredPlayers.clear();
-        room.timeLeft = 10;
-
-        const q = questions[room.currentQuestion];
-        io.to(roomCode).emit('next_question', {
-            number: room.currentQuestion + 1,
-            total: questions.length,
-            question: q.q,
-            players: room.players,
-            timeLeft: room.timeLeft
+        const q = questions[currentQuestionIndex];
+        io.emit('new_question', {
+            questionNumber: currentQuestionIndex + 1,
+            question: q.q
         });
 
-        // Bắt đầu đếm ngược 10 giây
-        room.timer = setInterval(() => {
-            room.timeLeft--;
-            io.to(roomCode).emit('timer_tick', { timeLeft: room.timeLeft });
+        io.emit('timer_update', timeLeft);
 
-            if (room.timeLeft <= 0) {
-                finishQuestion(roomCode);
+        timer = setInterval(() => {
+            timeLeft--;
+            io.emit('timer_update', timeLeft);
+
+            if (timeLeft <= 0) {
+                finishQuestion();
             }
         }, 1000);
     }
 
-    function finishQuestion(roomCode) {
-        const room = rooms[roomCode];
-        if (!room) return;
+    function finishQuestion() {
+        if (timer) clearInterval(timer);
 
-        if (room.timer) clearInterval(room.timer);
-
-        const currentQ = questions[room.currentQuestion];
-        // Thông báo hết giờ và hiển thị đáp án đúng trong 3 giây
-        io.to(roomCode).emit('show_answer', { correctAnswer: currentQ.a });
+        const q = questions[currentQuestionIndex];
+        io.emit('show_answer', { answer: q.a });
 
         setTimeout(() => {
-            room.currentQuestion++;
-            if (room.currentQuestion < questions.length) {
-                sendNextQuestion(roomCode);
+            currentQuestionIndex++;
+            if (currentQuestionIndex < questions.length) {
+                sendNextQuestion();
             } else {
-                io.to(roomCode).emit('game_over', room.players);
+                io.emit('game_over', players);
             }
         }, 3000);
     }
+
+    // Ngắt kết nối
+    socket.on('disconnect', () => {
+        delete players[socket.id];
+
+        if (socket.id === hostSocketId) {
+            const remainingIds = Object.keys(players);
+            if (remainingIds.length > 0) {
+                hostSocketId = remainingIds[0];
+                players[hostSocketId].ready = true;
+                io.to(hostSocketId).emit('set_as_host');
+            } else {
+                hostSocketId = null;
+            }
+        }
+
+        io.emit('update_leaderboard', players);
+    });
 });
 
 const PORT = process.env.PORT || 3000;
