@@ -6,15 +6,18 @@
     <title>Game Đố Vui Trực Tuyến</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 400px; text-align: center; }
-        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 10px; }
-        button:hover { background: #0056b3; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: bold; }
+        button:hover { opacity: 0.9; }
+        .btn-start { background: #ffc107; color: #212529; }
+        .btn-danger { background: #dc3545; }
+        .btn-success { background: #28a745; }
         .error { color: red; margin-top: 10px; font-size: 14px; }
         .hidden { display: none !important; }
         ul { list-style: none; padding: 0; text-align: left; }
-        ul li { padding: 8px; border-bottom: 1px solid #eee; }
+        ul li { padding: 10px; border-bottom: 1px solid #eee; font-size: 16px; }
     </style>
 </head>
 <body>
@@ -31,11 +34,11 @@
     <!-- MÀN HÌNH 2: SẢNH CHÍNH (TẠO HOẶC VÀO PHÒNG) -->
     <div id="lobby-screen" class="card hidden">
         <h2>Xin chào, <span id="display-user"></span>!</h2>
-        <hr style="margin: 20px 0;">
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
         
         <h3>Tạo Phòng Mới</h3>
         <input type="password" id="new-room-pass" placeholder="Mật khẩu phòng (để trống nếu tự do)">
-        <button onclick="createRoom()" style="background: #28a745;">Tạo Phòng</button>
+        <button class="btn-success" onclick="createRoom()">Tạo Phòng</button>
 
         <h3 style="margin-top: 30px;">Vào Phòng Có Sẵn</h3>
         <input type="text" id="join-room-code" placeholder="Nhập mã phòng 4 số">
@@ -48,17 +51,20 @@
     <!-- MÀN HÌNH 3: PHÒNG CHỜ (LOBBY ROOM) -->
     <div id="room-screen" class="card hidden">
         <h2>Phòng: <span id="room-code-display"></span></h2>
-        <p>Danh sách người chơi trong phòng:</p>
+        <p style="color: #666;">Danh sách người chơi trong phòng:</p>
         <ul id="players-list"></ul>
-        <button id="start-btn" class="hidden" style="background: #ffc107; color: black;">Bắt Đầu Chơi</button>
-        <button onclick="leaveRoom()" style="background: #dc3545; margin-top: 15px;">Rời Phòng</button>
+
+        <!-- Nút Bắt đầu chỉ hiện khi người chơi là CHỦ PHÒNG -->
+        <button id="start-btn" class="btn-start hidden">Bắt Đầu Chơi</button>
+
+        <button class="btn-danger" onclick="leaveRoom()" style="margin-top: 15px;">Rời Phòng</button>
     </div>
 
     <script>
         const socket = io();
         let currentUser = '';
 
-        // Tự động điền lại tên nếu trình duyệt đã lưu trước đó (tránh văng khi ra ngoài nhắn Zalo)
+        // Khôi phục tài khoản đã lưu để tránh văng khi thoát ra nhắn Zalo
         window.addEventListener('DOMContentLoaded', () => {
             const savedUser = localStorage.getItem('game_username');
             const savedPass = localStorage.getItem('game_password');
@@ -80,7 +86,6 @@
 
         socket.on('login_success', (data) => {
             currentUser = data.username;
-            // Lưu vào localStorage để không bị mất khi thoát ra ngoài
             localStorage.setItem('game_username', currentUser);
             localStorage.setItem('game_password', document.getElementById('password').value.trim());
 
@@ -99,7 +104,7 @@
         }
 
         socket.on('room_created', (data) => {
-            enterRoomUI(data.roomCode);
+            enterRoomUI(data.roomCode, data.isHost);
         });
 
         function joinRoom() {
@@ -113,17 +118,25 @@
         }
 
         socket.on('join_success', (data) => {
-            enterRoomUI(data.roomCode);
+            enterRoomUI(data.roomCode, data.isHost);
         });
 
         socket.on('join_error', (msg) => {
             document.getElementById('lobby-error').innerText = msg;
         });
 
-        function enterRoomUI(code) {
+        function enterRoomUI(code, isHost) {
             document.getElementById('lobby-screen').classList.add('hidden');
             document.getElementById('room-screen').classList.remove('hidden');
             document.getElementById('room-code-display').innerText = code;
+            
+            // Xử lý ẩn/hiện nút Bắt Đầu Chơi
+            const startBtn = document.getElementById('start-btn');
+            if (isHost) {
+                startBtn.classList.remove('hidden');
+            } else {
+                startBtn.classList.add('hidden');
+            }
         }
 
         socket.on('update_players', (players) => {
@@ -131,13 +144,13 @@
             list.innerHTML = '';
             players.forEach(p => {
                 const li = document.createElement('li');
-                li.innerText = p;
+                li.innerText = '• ' + p;
                 list.appendChild(li);
             });
         });
 
         function leaveRoom() {
-            location.reload(); // Tải lại trang để về sảnh
+            location.reload(); // Tải lại trang để ra lại sảnh
         }
     </script>
 </body>
