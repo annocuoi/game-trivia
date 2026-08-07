@@ -1,146 +1,106 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-
-// Nạp danh sách câu hỏi từ file questions.js riêng
+const express = require('http');
+const app = require('express')();
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
+const path = require('path');
 const questions = require('./questions');
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+app.use(express.static(path.join(__dirname, 'public')));
 
-app.use(express.static('public'));
+// Cấu trúc lưu trữ tài khoản: { username: { password, lastActive } }
+const users = {}; 
+const rooms = {}; // { roomCode: { host, password, players: [] } }
 
-let currentQuestionIndex = 0;
-let scores = {};
-let answeredThisRound = new Set();
-let timer = null;
-let hostSocketId = null;
-let isGameStarted = false;
+// THỜI GIAN TỰ ĐỘNG XÓA: Ở đây để là 7 ngày (tính bằng mili-giây)
+// Bạn có thể đổi thành 24 * 60 * 60 * 1000 nếu muốn xóa sau 1 ngày không hoạt động.
+const EXPIRE_TIME = 2 * 24 * 60 * 60 * 1000; 
+
+// Chạy hàm kiểm tra định kỳ mỗi 1 tiếng để xóa tài khoản offline lâu ngày
+setInterval(() => {
+    const now = Date.now();
+    for (let username in users) {
+        if (now - users[username].lastActive > EXPIRE_TIME) {
+            delete users[username];
+            console.log(`Đã tự động xóa tài khoản không hoạt động lâu ngày: ${username}`);
+        }
+    }
+}, 60 * 60 * 1000);
+
+function generateRoomCode() {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+}
 
 io.on('connection', (socket) => {
     console.log('Có người kết nối:', socket.id);
 
-    if (!hostSocketId) {
-        hostSocketId = socket.id;
-    }
-
-    socket.on('join_game', (name) => {
-        const isThisHost = (socket.id === hostSocketId);
-        scores[socket.id] = { name: name, score: 0, ready: isThisHost };
-        
-        io.to(hostSocketId).emit('set_as_host');
-        io.emit('update_leaderboard', scores);
-    });
-
-    socket.on('toggle_ready', () => {
-        if (scores[socket.id] && socket.id !== hostSocketId) {
-            scores[socket.id].ready = !scores[socket.id].ready;
-            io.emit('update_leaderboard', scores);
+    // 1. Đăng ký / Đăng nhập & Cập nhật thời gian hoạt động
+    socket.on('login', (data) => {
+        const { username, password } = data;
+        if (!username || !password) {
+            return socket.emit('login_error', 'Vui lòng nhập đầy đủ tên và mật khẩu!');
         }
-    });
 
-    // Nhận tin nhắn chat tổng
-    socket.on('send_chat', (message) => {
-        if (scores[socket.id] && message.trim() !== '') {
-            const chatData = {
-                name: scores[socket.id].name,
-                message: message.trim()
+        if (!users[username]) {
+            // Đăng ký mới
+            users[username] = {
+                password: password,
+                lastActive: Date.now()
             };
-            io.emit('receive_chat', chatData);
-        }
-    });
-
-    socket.on('start_game', () => {
-        if (socket.id === hostSocketId && !isGameStarted) {
-            isGameStarted = true;
-            startQuizLoop();
-        }
-    });
-
-    socket.on('submit_answer', (answer) => {
-        if (!scores[socket.id] || !isGameStarted) return;
-        if (answeredThisRound.has(socket.id)) return;
-
-        const currentQ = questions[currentQuestionIndex];
-        
-        // Chỉ xóa khoảng trắng thừa và đổi về chữ thường, GIỮ NGUYÊN DẤU TIẾNG VIỆT
-        const userAns = answer.trim().toLowerCase();
-        const correctAns = currentQ.a.toLowerCase();
-
-        if (userAns === correctAns) {
-            answeredThisRound.add(socket.id);
-            const rank = answeredThisRound.size;
-            
-            let pointsToAdd = 0;
-            if (rank === 1) pointsToAdd = 3;
-            else if (rank === 2) pointsToAdd = 2;
-            else if (rank === 3) pointsToAdd = 1;
-
-            scores[socket.id].score += pointsToAdd;
-            socket.emit('answer_result', { correct: true, rank, points: pointsToAdd });
-            io.emit('update_leaderboard', scores);
+            socket.emit('login_success', { username });
+            console.log(`Tài khoản mới đăng ký: ${username}`);
+        } else if (users[username].password === password) {
+            // Đăng nhập đúng, cập nhật lại thời gian hoạt động mới nhất
+            users[username].lastActive = Date.now();
+            socket.emit('login_success', { username });
         } else {
-            socket.emit('answer_result', { correct: false });
+            socket.emit('login_error', 'Sai mật khẩu tài khoản!');
         }
+    });
+
+    // 2. Tạo phòng mới
+    socket.on('create_room', (data) => {
+        const { username, roomPassword } = data;
+        const roomCode = generateRoomCode();
+
+        rooms[roomCode] = {
+            host: username,
+            password: roomPassword || '',
+            players: [username],
+            gameStarted: false
+        };
+
+        socket.join(roomCode);
+        socket.emit('room_created', { roomCode });
+    });
+
+    // 3. Vào phòng
+    socket.on('join_room', (data) => {
+        const { roomCode, roomPassword, username } = data;
+        const room = rooms[roomCode];
+
+        if (!room) {
+            return socket.emit('join_error', 'Mã phòng không tồn tại!');
+        }
+
+        if (room.password && room.password !== roomPassword) {
+            return socket.emit('join_error', 'Sai mật khẩu phòng!');
+        }
+
+        if (!room.players.includes(username)) {
+            room.players.push(username);
+        }
+
+        socket.join(roomCode);
+        socket.emit('join_success', { roomCode });
+        io.to(roomCode).emit('update_players', room.players);
     });
 
     socket.on('disconnect', () => {
-        delete scores[socket.id];
-        io.emit('update_leaderboard', scores);
-        
-        if (socket.id === hostSocketId) {
-            const remainingSockets = Array.from(io.sockets.sockets.keys());
-            if (remainingSockets.length > 0) {
-                hostSocketId = remainingSockets[0];
-                if (scores[hostSocketId]) scores[hostSocketId].ready = true;
-                io.to(hostSocketId).emit('set_as_host');
-                io.emit('update_leaderboard', scores);
-            } else {
-                hostSocketId = null;
-                isGameStarted = false;
-                currentQuestionIndex = 0;
-                clearInterval(timer);
-            }
-        }
         console.log('Ngắt kết nối:', socket.id);
     });
 });
 
-function startQuizLoop() {
-    currentQuestionIndex = 0;
-    
-    function nextQuestion() {
-        if (currentQuestionIndex < questions.length) {
-            answeredThisRound.clear();
-            const qData = { questionNumber: currentQuestionIndex + 1, question: questions[currentQuestionIndex].q };
-            io.emit('new_question', qData);
-
-            let timeLeft = 15;
-            clearInterval(timer);
-            timer = setInterval(() => {
-                io.emit('timer_update', timeLeft);
-                timeLeft--;
-
-                if (timeLeft < 0) {
-                    clearInterval(timer);
-                    io.emit('show_answer', { answer: questions[currentQuestionIndex].a });
-                    
-                    setTimeout(() => {
-                        currentQuestionIndex++;
-                        nextQuestion();
-                    }, 3000); 
-                }
-            }, 1000);
-        } else {
-            io.emit('game_over', scores);
-            isGameStarted = false;
-        }
-    }
-
-    nextQuestion();
-}
-
-server.listen(3000, () => {
-    console.log('Server đang chạy tại: http://localhost:3000');
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => {
+    console.log(`Server đang chạy trên cổng ${PORT}`);
 });
