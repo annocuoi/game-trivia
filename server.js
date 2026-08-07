@@ -7,6 +7,16 @@ const questions = require('./questions');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Hàm chuẩn hóa chuỗi tiếng Việt (xử lý chữ hoa/thường, dấu cũ/mới, khoảng trắng thừa)
+function cleanString(str) {
+    if (!str) return '';
+    return str
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, ' ')
+        .normalize('NFC');
+}
+
 const rooms = {}; 
 
 function generateRoomCode() {
@@ -20,15 +30,6 @@ function shuffleArray(array) {
         [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
-}
-// Hàm chuẩn hóa chuỗi tiếng Việt (chuyển chữ thường, xóa khoảng trắng thừa, chuẩn hóa dấu)
-function cleanString(str) {
-    if (!str) return '';
-    return str
-        .toLowerCase()                  // Chuyển thành chữ thường
-        .trim()                         // Xóa khoảng trắng ở đầu và cuối
-        .replace(/\s+/g, ' ')           // Biến nhiều khoảng trắng liên tiếp thành 1 khoảng trắng
-        .normalize('NFC');              // Chuẩn hóa bộ mã dấu tiếng Việt (Hỏa vs Hoả)
 }
 
 io.on('connection', (socket) => {
@@ -86,28 +87,43 @@ io.on('connection', (socket) => {
         socket.emit('update_category', room.selectedCategory);
     });
 
-    // 3. Quay lại sảnh chờ khi bấm Chơi Lại
+    // 3. Quay lại sảnh chờ khi bấm Chơi Lại (Chỉ áp dụng cho cá nhân người bấm)
     socket.on('back_to_lobby', (data) => {
-        const { roomCode } = data;
+        const { roomCode, playerId } = data;
         const room = rooms[roomCode];
         if (room) {
-            room.players.forEach(p => {
-                if (p.playerId !== room.hostPlayerId) {
-                    p.ready = false; // Reset trạng thái sẵn sàng của thành viên
-                }
-            });
+            const player = room.players.find(p => p.playerId === playerId);
+            if (player && player.playerId !== room.hostPlayerId) {
+                player.ready = false; 
+            }
             updateRoomLeaderboard(roomCode);
-            io.to(roomCode).emit('return_to_lobby');
+            socket.emit('return_to_lobby');
         }
     });
 
-    // 4. Rời phòng
-    socket.on('leave_room', (data) => {
-        const { roomCode, playerId } = data;
-        removePlayerFromRoom(socket, roomCode, playerId);
+    // 4. Chủ phòng đuổi người (Kick)
+    socket.on('kick_player', (data) => {
+        const { roomCode, targetPlayerId } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            const requester = room.players.find(p => p.socketId === socket.id);
+            if (requester && requester.playerId === room.hostPlayerId) {
+                const target = room.players.find(p => p.playerId === targetPlayerId);
+                if (target) {
+                    io.to(target.socketId).emit('kicked_out');
+                    removePlayerFromRoom(roomCode, targetPlayerId);
+                }
+            }
+        }
     });
 
-    // 5. Đổi chủ đề
+    // 5. Tự rời phòng
+    socket.on('leave_room', (data) => {
+        const { roomCode, playerId } = data;
+        removePlayerFromRoom(roomCode, playerId);
+    });
+
+    // 6. Đổi chủ đề
     socket.on('change_category', (data) => {
         const { roomCode, category } = data;
         const room = rooms[roomCode];
@@ -120,7 +136,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 6. Rejoin
+    // 7. Rejoin khi mở lại màn hình
     socket.on('rejoin_room', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
@@ -141,7 +157,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 7. Sẵn sàng
+    // 8. Sẵn sàng
     socket.on('toggle_ready', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
@@ -154,7 +170,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 8. Chat
+    // 9. Chat
     socket.on('send_chat', (data) => {
         const { roomCode, message } = data;
         const room = rooms[roomCode];
@@ -166,7 +182,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 9. Bắt đầu game
+    // 10. Bắt đầu game
     socket.on('start_game', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
@@ -195,7 +211,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 10. Trả lời câu hỏi
+    // 11. Trả lời câu hỏi
     socket.on('submit_answer', (data) => {
         const { roomCode, answer } = data;
         const room = rooms[roomCode];
@@ -204,7 +220,6 @@ io.on('connection', (socket) => {
         const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
 
-        // Dùng hàm cleanString để so sánh (không phân biệt HOA/thường, dấu cũ/mới, khoảng trắng)
         if (cleanString(answer) === cleanString(currentQ.a)) {
             room.answeredPlayers.add(socket.id);
             room.correctCount++;
@@ -232,6 +247,7 @@ io.on('connection', (socket) => {
         const room = rooms[roomCode];
         if (room) {
             const playerList = room.players.map(p => ({
+                playerId: p.playerId,
                 name: p.name + (!p.online ? ' (Đang kết nối lại...)' : ''),
                 ready: p.ready,
                 score: p.score,
@@ -249,7 +265,7 @@ io.on('connection', (socket) => {
 
         room.correctCount = 0;
         room.answeredPlayers.clear();
-        room.timeLeft = 25;
+        room.timeLeft = 10;
 
         const q = room.questions[room.currentQuestion];
         io.to(roomCode).emit('new_question', {
@@ -289,16 +305,19 @@ io.on('connection', (socket) => {
         }, 3000);
     }
 
-    function removePlayerFromRoom(socket, code, playerId) {
+    // Hàm xử lý chung để xóa người khỏi phòng
+    function removePlayerFromRoom(code, targetPlayerId) {
         const room = rooms[code];
         if (!room) return;
 
-        const idx = room.players.findIndex(p => p.playerId === playerId || p.socketId === socket.id);
+        const idx = room.players.findIndex(p => p.playerId === targetPlayerId);
         if (idx !== -1) {
             const wasHost = (room.players[idx].playerId === room.hostPlayerId);
+            const targetSocketId = room.players[idx].socketId;
             room.players.splice(idx, 1);
 
-            socket.leave(code);
+            const targetSocket = io.sockets.sockets.get(targetSocketId);
+            if (targetSocket) targetSocket.leave(code);
 
             if (room.players.length === 0) {
                 if (room.timer) clearInterval(room.timer);
@@ -313,6 +332,7 @@ io.on('connection', (socket) => {
         }
     }
 
+    // Xử lý ngắt kết nối tạm thời
     socket.on('disconnect', () => {
         for (let code in rooms) {
             const room = rooms[code];
@@ -324,7 +344,7 @@ io.on('connection', (socket) => {
                 player.disconnectTimer = setTimeout(() => {
                     const idx = room.players.findIndex(p => p.playerId === player.playerId);
                     if (idx !== -1 && !room.players[idx].online) {
-                        removePlayerFromRoom(socket, code, player.playerId);
+                        removePlayerFromRoom(code, player.playerId);
                     }
                 }, 60000);
             }

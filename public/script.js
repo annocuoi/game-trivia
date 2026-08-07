@@ -67,13 +67,18 @@ function enterLobby(roomCode, hostStatus) {
     isHost = hostStatus;
     sessionStorage.setItem('current_room_code', roomCode);
 
+    // XÓA SẠCH NỘI DUNG CHAT CŨ KHI VÀO PHÒNG MỚI
+    const chatMessages = document.getElementById('chat-messages');
+    if (chatMessages) {
+        chatMessages.innerHTML = '';
+    }
+
     document.getElementById('step-room-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
     document.getElementById('game-over').style.display = 'none';
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('room-code-display').innerText = roomCode;
 
-    // Reset nút sẵn sàng của thành viên
     if (!isHost) {
         isReady = false;
         const readyBtn = document.getElementById('ready-btn');
@@ -215,13 +220,24 @@ socket.on('update_leaderboard', (players) => {
     document.getElementById('player-count-lobby').innerText = players.length;
 
     players.forEach((player) => {
+        // CẬP NHẬT HIỂN THỊ TRONG SẢNH CHỜ
         if (playerListLobby) {
             const liLobby = document.createElement('li');
+            liLobby.style.display = 'flex';
+            liLobby.style.justifyContent = 'space-between';
+            liLobby.style.alignItems = 'center';
+
             if (player.isHost) {
-                liLobby.innerHTML = `${player.name} 👑 <strong>(Chủ phòng)</strong>`;
+                liLobby.innerHTML = `<span>${player.name} 👑 <strong>(Chủ phòng)</strong></span>`;
             } else {
                 const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
-                liLobby.innerText = player.name + statusText;
+                let html = `<span>${player.name} ${statusText}</span>`;
+                
+                // Nếu mình đang xem là Chủ phòng, hiển thị thêm nút Đuổi
+                if (isHost) {
+                    html += `<button onclick="kickPlayer('${player.playerId}')" style="width: auto; padding: 4px 8px; font-size: 12px; background: #dc3545; color: white; margin: 0; border-radius: 4px;">❌ Đuổi</button>`;
+                }
+                liLobby.innerHTML = html;
             }
             playerListLobby.appendChild(liLobby);
         }
@@ -258,16 +274,15 @@ socket.on('game_over', (players) => {
     }
 });
 
-// Nút Chơi Lại: Quay về Sảnh chờ trong phòng
+// Chơi lại (Chỉ trả bản thân về sảnh chờ)
 function playAgain() {
-    socket.emit('back_to_lobby', { roomCode: currentRoomCode });
+    socket.emit('back_to_lobby', { roomCode: currentRoomCode, playerId });
 }
 
 socket.on('return_to_lobby', () => {
     document.getElementById('game-over').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
     
-    // Đưa thành viên về trạng thái chưa sẵn sàng cho ván mới
     if (!isHost) {
         isReady = false;
         const readyBtn = document.getElementById('ready-btn');
@@ -277,7 +292,6 @@ socket.on('return_to_lobby', () => {
     }
 });
 
-// Nút Thoát Phòng: Về bước chọn/tạo phòng (Giữ nguyên Tên)
 function leaveRoom() { 
     sessionStorage.removeItem('current_room_code');
     socket.emit('leave_room', { roomCode: currentRoomCode, playerId });
@@ -291,3 +305,17 @@ function leaveRoom() {
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('step-room-screen').style.display = 'block';
 }
+
+// Chức năng Đuổi người dành riêng cho Chủ phòng
+function kickPlayer(targetPlayerId) {
+    if (confirm("Bạn có chắc chắn muốn mời người này ra khỏi phòng không?")) {
+        socket.emit('kick_player', { roomCode: currentRoomCode, targetPlayerId });
+    }
+}
+
+// Khi bị Chủ phòng đuổi
+socket.on('kicked_out', () => {
+    alert("Bạn đã bị Chủ phòng mời ra khỏi phòng!");
+    sessionStorage.removeItem('current_room_code');
+    location.reload();
+});
