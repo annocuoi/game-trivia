@@ -7,21 +7,16 @@ const questions = require('./questions');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Cấu trúc lưu trữ tài khoản: { username: { password, lastActive } }
 const users = {}; 
-const rooms = {}; // { roomCode: { host, password, players: [] } }
+const rooms = {}; 
 
-// THỜI GIAN TỰ ĐỘNG XÓA TÀI KHOẢN OFFLINE: 7 ngày (tính bằng mili-giây)
-// Thay số 7 ở đây nếu bạn muốn đổi sang số ngày khác (ví dụ: 1 * 24 * ...)
 const EXPIRE_TIME = 7 * 24 * 60 * 60 * 1000; 
 
-// Chạy kiểm tra dọn dẹp tài khoản cũ mỗi 1 tiếng
 setInterval(() => {
     const now = Date.now();
     for (let username in users) {
         if (now - users[username].lastActive > EXPIRE_TIME) {
             delete users[username];
-            console.log(`Đã tự động xóa tài khoản không hoạt động lâu ngày: ${username}`);
         }
     }
 }, 60 * 60 * 1000);
@@ -31,33 +26,23 @@ function generateRoomCode() {
 }
 
 io.on('connection', (socket) => {
-    console.log('Có người kết nối:', socket.id);
-
-    // 1. Đăng ký / Đăng nhập tài khoản
+    // Đăng ký / Đăng nhập
     socket.on('login', (data) => {
         const { username, password } = data;
-        if (!username || !password) {
-            return socket.emit('login_error', 'Vui lòng nhập đầy đủ tên và mật khẩu!');
-        }
+        if (!username || !password) return socket.emit('login_error', 'Nhập đủ tên & mật khẩu!');
 
         if (!users[username]) {
-            // Tự động đăng ký mới
-            users[username] = {
-                password: password,
-                lastActive: Date.now()
-            };
+            users[username] = { password, lastActive: Date.now() };
             socket.emit('login_success', { username });
-            console.log(`Tài khoản mới đăng ký: ${username}`);
         } else if (users[username].password === password) {
-            // Đăng nhập đúng, cập nhật thời gian hoạt động mới nhất
             users[username].lastActive = Date.now();
             socket.emit('login_success', { username });
         } else {
-            socket.emit('login_error', 'Sai mật khẩu tài khoản!');
+            socket.emit('login_error', 'Sai mật khẩu!');
         }
     });
 
-    // 2. Tạo phòng mới (Chủ phòng)
+    // Tạo phòng
     socket.on('create_room', (data) => {
         const { username, roomPassword } = data;
         const roomCode = generateRoomCode();
@@ -65,49 +50,98 @@ io.on('connection', (socket) => {
         rooms[roomCode] = {
             host: username,
             password: roomPassword || '',
-            players: [username],
-            gameStarted: false
+            players: [{ name: username, ready: true, score: 0 }],
+            currentQuestion: 0
         };
 
         socket.join(roomCode);
-        // Trả về isHost = true cho người tạo phòng
         socket.emit('room_created', { roomCode, isHost: true });
-        console.log(`Phòng ${roomCode} được tạo bởi chủ phòng: ${username}`);
     });
 
-    // 3. Vào phòng bằng mã 4 số
+    // Vào phòng
     socket.on('join_room', (data) => {
         const { roomCode, roomPassword, username } = data;
         const room = rooms[roomCode];
 
-        if (!room) {
-            return socket.emit('join_error', 'Mã phòng không tồn tại!');
-        }
+        if (!room) return socket.emit('join_error', 'Phòng không tồn tại!');
+        if (room.password && room.password !== roomPassword) return socket.emit('join_error', 'Sai mật khẩu phòng!');
 
-        if (room.password && room.password !== roomPassword) {
-            return socket.emit('join_error', 'Sai mật khẩu phòng!');
-        }
-
-        if (!room.players.includes(username)) {
-            room.players.push(username);
+        if (!room.players.find(p => p.name === username)) {
+            room.players.push({ name: username, ready: false, score: 0 });
         }
 
         socket.join(roomCode);
-        // Kiểm tra xem người vào có phải là chủ phòng hay không
-        const isHost = (username === room.host);
-        socket.emit('join_success', { roomCode, isHost });
-
-        // Cập nhật danh sách người chơi cho cả phòng
+        socket.emit('join_success', { roomCode, isHost: username === room.host });
         io.to(roomCode).emit('update_players', room.players);
-        console.log(`${username} đã vào phòng ${roomCode}`);
     });
 
-    socket.on('disconnect', () => {
-        console.log('Ngắt kết nối:', socket.id);
+    // Bấm Sẵn Sàng
+    socket.on('toggle_ready', (data) => {
+        const { roomCode, username } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            const player = room.players.find(p => p.name === username);
+            if (player) {
+                player.ready = !player.ready;
+                io.to(roomCode).emit('update_players', room.players);
+            }
+        }
     });
+
+    // Gửi Chat
+    socket.on('send_chat', (data) => {
+        const { roomCode, username, message } = data;
+        io.to(roomCode).emit('receive_chat', { username, message });
+    });
+
+    // Bắt đầu game
+    socket.on('start_game', (data) => {
+        const { roomCode } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            room.currentQuestion = 0;
+            io.to(roomCode).emit('game_started');
+            sendNextQuestion(roomCode);
+        }
+    });
+
+    // Trả lời câu hỏi
+    socket.on('submit_answer', (data) => {
+        const { roomCode, username, answer } = data;
+        const room = rooms[roomCode];
+        if (room) {
+            const currentQ = questions[room.currentQuestion];
+            if (currentQ && answer.trim().toLowerCase() === currentQ.a.toLowerCase()) {
+                const player = room.players.find(p => p.name === username);
+                if (player) player.score += 10;
+
+                io.to(roomCode).emit('correct_answer', { username, correctAnswer: currentQ.a });
+
+                // Qua câu tiếp theo
+                room.currentQuestion++;
+                setTimeout(() => {
+                    if (room.currentQuestion < questions.length) {
+                        sendNextQuestion(roomCode);
+                    } else {
+                        io.to(roomCode).emit('game_over', room.players);
+                    }
+                }, 2000);
+            }
+        }
+    });
+
+    function sendNextQuestion(roomCode) {
+        const room = rooms[roomCode];
+        if (room) {
+            const q = questions[room.currentQuestion];
+            io.to(roomCode).emit('next_question', {
+                number: room.currentQuestion + 1,
+                total: questions.length,
+                question: q.q
+            });
+        }
+    }
 });
 
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => {
-    console.log(`Server đang chạy trên cổng ${PORT}`);
-});
+http.listen(PORT, () => console.log(`Server running on port ${PORT}`));
