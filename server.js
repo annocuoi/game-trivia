@@ -265,7 +265,7 @@ io.on('connection', (socket) => {
 
         room.correctCount = 0;
         room.answeredPlayers.clear();
-        room.timeLeft = 10;
+        room.timeLeft = 30;
 
         const q = room.questions[room.currentQuestion];
         io.to(roomCode).emit('new_question', {
