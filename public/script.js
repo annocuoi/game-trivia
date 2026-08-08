@@ -10,6 +10,7 @@ let currentName = '';
 let currentRoomCode = '';
 let isHost = false;
 let isReady = false;
+let isSpectator = false;
 let lastChatTime = 0;
 
 socket.on('connect', () => {
@@ -22,6 +23,8 @@ socket.on('connect', () => {
 socket.on('rejoin_success', (data) => {
     currentRoomCode = data.roomCode;
     isHost = data.isHost;
+    isSpectator = data.isSpectator;
+
     document.getElementById('step-name-screen').style.display = 'none';
     document.getElementById('step-room-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
@@ -58,16 +61,16 @@ function joinRoom() {
     socket.emit('join_room', { roomCode, roomPassword, name: currentName, playerId });
 }
 
-socket.on('room_created', (data) => enterLobby(data.roomCode, true));
-socket.on('join_success', (data) => enterLobby(data.roomCode, data.isHost));
+socket.on('room_created', (data) => enterLobby(data.roomCode, true, false));
+socket.on('join_success', (data) => enterLobby(data.roomCode, data.isHost, data.isSpectator));
 socket.on('room_error', (msg) => document.getElementById('room-error').innerText = msg);
 
-function enterLobby(roomCode, hostStatus) {
+function enterLobby(roomCode, hostStatus, spectatorStatus) {
     currentRoomCode = roomCode;
     isHost = hostStatus;
+    isSpectator = spectatorStatus;
     sessionStorage.setItem('current_room_code', roomCode);
 
-    // XÓA SẠCH NỘI DUNG CHAT CŨ KHI VÀO PHÒNG MỚI
     const chatMessages = document.getElementById('chat-messages');
     if (chatMessages) {
         chatMessages.innerHTML = '';
@@ -98,7 +101,7 @@ function updateRoleUI() {
         document.getElementById('player-category-display').style.display = 'none';
     } else {
         document.getElementById('host-controls').style.display = 'none';
-        document.getElementById('player-controls').style.display = 'block';
+        document.getElementById('player-controls').style.display = isSpectator ? 'none' : 'block';
         document.getElementById('host-category-select').style.display = 'none';
         document.getElementById('player-category-display').style.display = 'block';
     }
@@ -116,6 +119,7 @@ socket.on('update_category', (category) => {
 });
 
 function toggleReady() {
+    if (isSpectator) return;
     isReady = !isReady;
     const readyBtn = document.getElementById('ready-btn');
     
@@ -175,13 +179,28 @@ socket.on('new_question', (data) => {
     document.getElementById('q-number').innerText = `Câu hỏi ${data.questionNumber}/10 [${data.category}]`;
     document.getElementById('q-text').innerText = data.question;
     document.getElementById('feedback').innerText = '';
-    document.getElementById('answer-input').value = '';
-    document.getElementById('answer-input').disabled = false;
+    
+    const ansInput = document.getElementById('answer-input');
+    const submitBtn = document.getElementById('submit-ans-btn');
+    const ansContainer = document.getElementById('answer-container');
+    const specMsg = document.getElementById('spectator-msg');
+
+    if (isSpectator) {
+        ansContainer.style.display = 'none';
+        specMsg.style.display = 'block';
+    } else {
+        ansContainer.style.display = 'block';
+        specMsg.style.display = 'none';
+        ansInput.value = '';
+        ansInput.disabled = false;
+        submitBtn.disabled = false;
+    }
 });
 
 function submitAnswer() {
+    if (isSpectator) return;
     const input = document.getElementById('answer-input');
-    const answer = input.value;
+    const answer = input.value.trim();
     if (!answer) return;
 
     socket.emit('submit_answer', { roomCode: currentRoomCode, answer });
@@ -198,6 +217,7 @@ socket.on('answer_result', (res) => {
         feedback.style.color = 'green';
         feedback.innerText = `Chính xác! Bạn đứng thứ ${res.rank} (+${res.points} điểm)`;
         document.getElementById('answer-input').disabled = true;
+        document.getElementById('submit-ans-btn').disabled = true;
     } else {
         feedback.style.color = 'red';
         feedback.innerText = 'Sai rồi, thử lại xem!';
@@ -207,7 +227,10 @@ socket.on('answer_result', (res) => {
 socket.on('show_answer', (data) => {
     document.getElementById('feedback').style.color = 'blue';
     document.getElementById('feedback').innerText = `Hết giờ! Đáp án là: ${data.answer.toUpperCase()}`;
-    document.getElementById('answer-input').disabled = true;
+    if (!isSpectator) {
+        document.getElementById('answer-input').disabled = true;
+        document.getElementById('submit-ans-btn').disabled = true;
+    }
 });
 
 socket.on('update_leaderboard', (players) => {
@@ -219,32 +242,35 @@ socket.on('update_leaderboard', (players) => {
 
     document.getElementById('player-count-lobby').innerText = players.length;
 
+    // Cập nhật trạng thái xem
+    const me = players.find(p => p.playerId === playerId);
+    if (me) isSpectator = me.isSpectator;
+
     players.forEach((player) => {
-        // CẬP NHẬT HIỂN THỊ TRONG SẢNH CHỜ
         if (playerListLobby) {
             const liLobby = document.createElement('li');
             liLobby.style.display = 'flex';
             liLobby.style.justifyContent = 'space-between';
             liLobby.style.alignItems = 'center';
 
-            if (player.isHost) {
-                liLobby.innerHTML = `<span>${player.name} 👑 <strong>(Chủ phòng)</strong></span>`;
-            } else {
-                const statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
-                let html = `<span>${player.name} ${statusText}</span>`;
-                
-                // Nếu mình đang xem là Chủ phòng, hiển thị thêm nút Đuổi
-                if (isHost) {
-                    html += `<button onclick="kickPlayer('${player.playerId}')" style="width: auto; padding: 4px 8px; font-size: 12px; background: #dc3545; color: white; margin: 0; border-radius: 4px;">❌ Đuổi</button>`;
-                }
-                liLobby.innerHTML = html;
+            let statusText = player.ready ? " ✅ (Đã sẵn sàng)" : " ⏳ (Chưa sẵn sàng)";
+            if (player.isSpectator) statusText = " 👁️ (Khán giả)";
+            else if (player.isHost) statusText = " 👑 (Chủ phòng)";
+
+            let html = `<span>${player.name}${statusText}</span>`;
+            
+            // Hiển thị nút Kick (Chủ phòng không tự kick chính mình)
+            if (isHost && player.playerId !== playerId) {
+                html += `<button onclick="kickPlayer('${player.playerId}')" style="width: auto; padding: 4px 8px; font-size: 12px; background: #dc3545; color: white; margin: 0; border-radius: 4px;">❌ Đuổi</button>`;
             }
+            liLobby.innerHTML = html;
             playerListLobby.appendChild(liLobby);
         }
     });
 
     if (scoreList) {
-        const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+        const activePlayers = players.filter(p => !p.isSpectator);
+        const sortedPlayers = [...activePlayers].sort((a, b) => b.score - a.score);
         
         sortedPlayers.forEach((player, index) => {
             const liGame = document.createElement('li');
@@ -267,14 +293,14 @@ socket.on('game_over', (players) => {
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'block';
 
-    const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
+    const activePlayers = players.filter(p => !p.isSpectator);
+    const sortedPlayers = [...activePlayers].sort((a, b) => b.score - a.score);
     if (sortedPlayers.length > 0) {
         document.getElementById('winner-text').innerText = 
             `🏆 Chúc mừng ${sortedPlayers[0].name} đã đạt ${sortedPlayers[0].score} điểm!`;
     }
 });
 
-// Chơi lại (Chỉ trả bản thân về sảnh chờ)
 function playAgain() {
     socket.emit('back_to_lobby', { roomCode: currentRoomCode, playerId });
 }
@@ -283,6 +309,9 @@ socket.on('return_to_lobby', () => {
     document.getElementById('game-over').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
     
+    isSpectator = false; // Chuyển khán giả thành người chơi khi về sảnh
+    updateRoleUI();
+
     if (!isHost) {
         isReady = false;
         const readyBtn = document.getElementById('ready-btn');
@@ -299,6 +328,7 @@ function leaveRoom() {
     currentRoomCode = '';
     isHost = false;
     isReady = false;
+    isSpectator = false;
 
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'none';
@@ -306,14 +336,12 @@ function leaveRoom() {
     document.getElementById('step-room-screen').style.display = 'block';
 }
 
-// Chức năng Đuổi người dành riêng cho Chủ phòng
 function kickPlayer(targetPlayerId) {
     if (confirm("Bạn có chắc chắn muốn mời người này ra khỏi phòng không?")) {
         socket.emit('kick_player', { roomCode: currentRoomCode, targetPlayerId });
     }
 }
 
-// Khi bị Chủ phòng đuổi
 socket.on('kicked_out', () => {
     alert("Bạn đã bị Chủ phòng mời ra khỏi phòng!");
     sessionStorage.removeItem('current_room_code');

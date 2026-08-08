@@ -43,13 +43,14 @@ io.on('connection', (socket) => {
             hostPlayerId: playerId,
             password: roomPassword || '',
             selectedCategory: 'Tất cả',
-            players: [{ socketId: socket.id, playerId, name, ready: true, score: 0, online: true }],
+            players: [{ socketId: socket.id, playerId, name, ready: true, score: 0, online: true, isSpectator: false }],
             questions: [],
             currentQuestion: 0,
             correctCount: 0,
             answeredPlayers: new Set(),
             timer: null,
-            timeLeft: 10
+            timeLeft: 10,
+            isPlaying: false
         };
 
         socket.join(roomCode);
@@ -58,7 +59,7 @@ io.on('connection', (socket) => {
         io.to(roomCode).emit('update_category', rooms[roomCode].selectedCategory);
     });
 
-    // 2. Vào phòng
+    // 2. Vào phòng (Gán Chế độ Khán Giả nếu Game Đang Chơi)
     socket.on('join_room', (data) => {
         const { roomCode, roomPassword, name, playerId } = data;
         const room = rooms[roomCode];
@@ -70,7 +71,9 @@ io.on('connection', (socket) => {
         let player = room.players.find(p => p.playerId === playerId);
         
         if (!player) {
-            player = { socketId: socket.id, playerId, name, ready: isHost, score: 0, online: true };
+            // Nếu game đang diễn ra thì tự động chuyển thành KHÁN GIẢ
+            const isSpectator = room.isPlaying;
+            player = { socketId: socket.id, playerId, name, ready: isHost, score: 0, online: true, isSpectator };
             room.players.push(player);
         } else {
             player.socketId = socket.id;
@@ -82,26 +85,34 @@ io.on('connection', (socket) => {
         }
 
         socket.join(roomCode);
-        socket.emit('join_success', { roomCode, isHost });
+        socket.emit('join_success', { roomCode, isHost, isSpectator: player.isSpectator });
+        
+        if (player.isSpectator) {
+            socket.emit('receive_chat', { name: "Hệ thống ⚠️", message: "Trận đấu đang diễn ra. Bạn tham gia với tư cách Khán Giả!" });
+        }
+
         updateRoomLeaderboard(roomCode);
         socket.emit('update_category', room.selectedCategory);
     });
 
-    // 3. Quay lại sảnh chờ khi bấm Chơi Lại (Chỉ áp dụng cho cá nhân người bấm)
+    // 3. Chơi lại (Khán giả chuyển thành Người chơi chính ở ván mới)
     socket.on('back_to_lobby', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
         if (room) {
             const player = room.players.find(p => p.playerId === playerId);
-            if (player && player.playerId !== room.hostPlayerId) {
-                player.ready = false; 
+            if (player) {
+                player.isSpectator = false; // Chuyển thành người chơi chính
+                if (player.playerId !== room.hostPlayerId) {
+                    player.ready = false; 
+                }
             }
             updateRoomLeaderboard(roomCode);
             socket.emit('return_to_lobby');
         }
     });
 
-    // 4. Chủ phòng đuổi người (Kick)
+    // 4. Chủ phòng đuổi người (Kick linh hoạt)
     socket.on('kick_player', (data) => {
         const { roomCode, targetPlayerId } = data;
         const room = rooms[roomCode];
@@ -109,7 +120,12 @@ io.on('connection', (socket) => {
             const requester = room.players.find(p => p.socketId === socket.id);
             if (requester && requester.playerId === room.hostPlayerId) {
                 const target = room.players.find(p => p.playerId === targetPlayerId);
-                if (target) {
+                if (target && target.playerId !== room.hostPlayerId) {
+                    // Nếu ĐANG CHƠI mà Target KHÔNG PHẢI KHÁN GIẢ -> Chặn kick
+                    if (room.isPlaying && !target.isSpectator) {
+                        return socket.emit('start_error', 'Không thể kick người chơi chính khi ván đấu đang diễn ra!');
+                    }
+
                     io.to(target.socketId).emit('kicked_out');
                     removePlayerFromRoom(roomCode, targetPlayerId);
                 }
@@ -136,7 +152,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 7. Rejoin khi mở lại màn hình
+    // 7. Rejoin kết nối lại
     socket.on('rejoin_room', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
@@ -150,7 +166,7 @@ io.on('connection', (socket) => {
                     player.disconnectTimer = null;
                 }
                 socket.join(roomCode);
-                socket.emit('rejoin_success', { roomCode, isHost: playerId === room.hostPlayerId });
+                socket.emit('rejoin_success', { roomCode, isHost: playerId === room.hostPlayerId, isSpectator: player.isSpectator });
                 updateRoomLeaderboard(roomCode);
                 socket.emit('update_category', room.selectedCategory);
             }
@@ -163,7 +179,7 @@ io.on('connection', (socket) => {
         const room = rooms[roomCode];
         if (room) {
             const player = room.players.find(p => p.playerId === playerId);
-            if (player && playerId !== room.hostPlayerId) {
+            if (player && playerId !== room.hostPlayerId && !player.isSpectator) {
                 player.ready = !player.ready;
                 updateRoomLeaderboard(roomCode);
             }
@@ -177,7 +193,8 @@ io.on('connection', (socket) => {
         if (room) {
             const player = room.players.find(p => p.socketId === socket.id);
             if (player) {
-                io.to(roomCode).emit('receive_chat', { name: player.name, message });
+                const prefix = player.isSpectator ? " [Khán Giả]" : "";
+                io.to(roomCode).emit('receive_chat', { name: player.name + prefix, message });
             }
         }
     });
@@ -189,7 +206,8 @@ io.on('connection', (socket) => {
         if (room) {
             if (playerId !== room.hostPlayerId) return;
 
-            const unready = room.players.find(p => p.playerId !== room.hostPlayerId && !p.ready);
+            const activePlayers = room.players.filter(p => !p.isSpectator);
+            const unready = activePlayers.find(p => p.playerId !== room.hostPlayerId && !p.ready);
             if (unready) {
                 return socket.emit('start_error', `Chưa thể bắt đầu! (${unready.name} chưa sẵn sàng)`);
             }
@@ -207,15 +225,19 @@ io.on('connection', (socket) => {
             }
 
             room.questions = shuffleArray(filteredQuestions);
+            room.isPlaying = true; // Đánh dấu ván đấu bắt đầu
             sendNextQuestion(roomCode);
         }
     });
 
-    // 11. Trả lời câu hỏi
+    // 11. Trả lời câu hỏi (Chỉ cho phép Người chơi chính)
     socket.on('submit_answer', (data) => {
         const { roomCode, answer } = data;
         const room = rooms[roomCode];
         if (!room || room.answeredPlayers.has(socket.id)) return;
+
+        const player = room.players.find(p => p.socketId === socket.id);
+        if (!player || player.isSpectator) return; // Chặn khán giả gửi đáp án
 
         const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
@@ -229,13 +251,13 @@ io.on('connection', (socket) => {
             else if (room.correctCount === 2) points = 2;
             else if (room.correctCount === 3) points = 1;
 
-            const player = room.players.find(p => p.socketId === socket.id);
-            if (player) player.score += points;
+            player.score += points;
 
             socket.emit('answer_result', { correct: true, rank: room.correctCount, points });
             updateRoomLeaderboard(roomCode);
 
-            if (room.answeredPlayers.size >= room.players.length) {
+            const activePlayers = room.players.filter(p => !p.isSpectator && p.online);
+            if (room.answeredPlayers.size >= activePlayers.length) {
                 finishQuestion(roomCode);
             }
         } else {
@@ -248,10 +270,11 @@ io.on('connection', (socket) => {
         if (room) {
             const playerList = room.players.map(p => ({
                 playerId: p.playerId,
-                name: p.name + (!p.online ? ' (Đang kết nối lại...)' : ''),
+                name: p.name + (!p.online ? ' (Đang nối lại...)' : ''),
                 ready: p.ready,
                 score: p.score,
-                isHost: p.playerId === room.hostPlayerId
+                isHost: p.playerId === room.hostPlayerId,
+                isSpectator: p.isSpectator
             }));
             io.to(roomCode).emit('update_leaderboard', playerList);
         }
@@ -300,12 +323,12 @@ io.on('connection', (socket) => {
             if (room.currentQuestion < Math.min(10, room.questions.length)) {
                 sendNextQuestion(roomCode);
             } else {
+                room.isPlaying = false; // Kết thúc ván đấu
                 io.to(roomCode).emit('game_over', room.players);
             }
         }, 3000);
     }
 
-    // Hàm xử lý chung để xóa người khỏi phòng
     function removePlayerFromRoom(code, targetPlayerId) {
         const room = rooms[code];
         if (!room) return;
@@ -326,13 +349,13 @@ io.on('connection', (socket) => {
                 if (wasHost) {
                     room.hostPlayerId = room.players[0].playerId;
                     room.players[0].ready = true;
+                    room.players[0].isSpectator = false;
                 }
                 updateRoomLeaderboard(code);
             }
         }
     }
 
-    // Xử lý ngắt kết nối tạm thời
     socket.on('disconnect', () => {
         for (let code in rooms) {
             const room = rooms[code];
@@ -346,7 +369,7 @@ io.on('connection', (socket) => {
                     if (idx !== -1 && !room.players[idx].online) {
                         removePlayerFromRoom(code, player.playerId);
                     }
-                }, 60000);
+                }, 120000); // Giữ kết nối trong 2 phút
             }
         }
     });

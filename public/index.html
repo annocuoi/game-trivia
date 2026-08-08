@@ -2,23 +2,25 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Game Đố Vui Trực Tuyến</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
-        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
-        input, select { width: 90%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
-        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 8px; font-weight: bold; }
+        * { box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
+        input, select { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 6px; font-weight: bold; }
         button:hover { opacity: 0.9; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
         .btn-success { background: #28a745; }
         .btn-danger { background: #dc3545; }
         .error { color: red; margin-top: 8px; font-size: 14px; font-weight: bold; }
         ul { list-style: none; padding: 0; text-align: left; }
         ul li { padding: 8px; border-bottom: 1px solid #eee; }
-        #chat-messages { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 10px 0; font-size: 14px; }
+        #chat-messages { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 8px 0; font-size: 14px; }
         .cooldown { color: red; font-size: 13px; margin-top: 4px; }
-        .category-box { background: #eef2ff; border: 1px solid #c7d2fe; padding: 10px; border-radius: 8px; margin: 12px 0; font-weight: bold; color: #3730a3; }
+        .category-box { background: #eef2ff; border: 1px solid #c7d2fe; padding: 10px; border-radius: 8px; margin: 10px 0; font-weight: bold; color: #3730a3; }
     </style>
 </head>
 <body>
@@ -39,7 +41,7 @@
         <input type="password" id="create-pass" placeholder="Mật khẩu phòng (không bắt buộc)">
         <button class="btn-success" onclick="createRoom()">Tạo Phòng</button>
 
-        <hr style="margin: 20px 0;">
+        <hr style="margin: 15px 0;">
 
         <h3>Vào Phòng Có Sẵn</h3>
         <input type="text" id="join-code" placeholder="Nhập mã phòng 4 số">
@@ -52,8 +54,8 @@
     <!-- BƯỚC 3: SẢNH CHỜ (LOBBY ROOM) -->
     <div id="lobby-screen" class="card" style="display: none;">
         <h2>Sảnh Chờ</h2>
-        <p style="font-size: 18px;">Mã Phòng: <strong id="room-code-display" style="color: #007bff;"></strong></p>
-        <p>Số người trong phòng: <strong id="player-count-lobby">0</strong></p>
+        <p style="font-size: 18px; margin: 5px 0;">Mã Phòng: <strong id="room-code-display" style="color: #007bff;"></strong></p>
+        <p style="margin: 5px 0;">Số người trong phòng: <strong id="player-count-lobby">0</strong></p>
         
         <!-- MỤC LỰA CHỌN CHỦ ĐỀ -->
         <div class="category-box">
@@ -75,7 +77,7 @@
             </div>
         </div>
 
-        <h3>Danh sách người chơi:</h3>
+        <h3>Danh sách người trong phòng:</h3>
         <ul id="player-list-lobby"></ul>
 
         <!-- Điều khiển Host -->
@@ -90,11 +92,11 @@
 
         <div id="lobby-error" class="error"></div>
 
-        <hr style="margin: 20px 0;">
+        <hr style="margin: 15px 0;">
         <h3>Chat Tổng</h3>
         <div id="chat-messages"></div>
         <div style="display: flex; gap: 5px;">
-            <input type="text" id="chat-input" placeholder="Nhập tin nhắn..." style="margin: 0;">
+            <input type="text" id="chat-input" placeholder="Nhập tin nhắn..." style="margin: 0;" onkeypress="if(event.key==='Enter') sendChat()">
             <button onclick="sendChat()" style="width: auto; margin: 0; padding: 10px 15px;">Gửi</button>
         </div>
         <div id="chat-cooldown" class="cooldown"></div>
@@ -107,15 +109,21 @@
         <div style="font-size: 18px; font-weight: bold; color: #dc3545; margin-bottom: 10px;">
             ⏳ Thời gian: <span id="time">10</span>s
         </div>
-        <h3 id="q-number">Câu hỏi</h3>
-        <h2 id="q-text" style="color: #333;">Nội dung câu hỏi</h2>
+        <h3 id="q-number" style="margin: 5px 0;">Câu hỏi</h3>
+        <h2 id="q-text" style="color: #333; margin: 10px 0;">Nội dung câu hỏi</h2>
 
-        <input type="text" id="answer-input" placeholder="Nhập đáp án...">
-        <button onclick="submitAnswer()">Gửi Đáp Án</button>
+        <div id="answer-container">
+            <input type="text" id="answer-input" placeholder="Nhập đáp án...">
+            <button id="submit-ans-btn" onclick="submitAnswer()">Gửi Đáp Án</button>
+        </div>
 
-        <div id="feedback" style="margin-top: 15px; font-weight: bold;"></div>
+        <div id="spectator-msg" style="display: none; color: #f59e0b; font-weight: bold; margin: 10px 0;">
+            👁️ Bạn đang là Khán Giả xem ván đấu này!
+        </div>
 
-        <hr style="margin: 20px 0;">
+        <div id="feedback" style="margin-top: 10px; font-weight: bold;"></div>
+
+        <hr style="margin: 15px 0;">
         <h3>Bảng Xếp Hạng</h3>
         <ul id="score-list"></ul>
     </div>
