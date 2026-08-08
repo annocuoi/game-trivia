@@ -88,8 +88,8 @@ io.on('connection', (socket) => {
         if (player.isSpectator) {
             socket.emit('receive_chat', { name: "Hệ thống ⚠️", message: "Trận đấu đang diễn ra. Bạn tham gia với tư cách Khán Giả!" });
             
-            // NẾU LÀ KHÁN GIẢ VÀO GIỮA CHỪNG -> GỬI CÂU HỎI HIỆN TẠI NGAY LẬP TỨC
-            if (room.isPlaying && room.questions[room.currentQuestion]) {
+            // KIỂM TRA AN TOÀN TRÁNH CRASH SERVER
+            if (room.isPlaying && room.questions && room.questions.length > 0 && room.questions[room.currentQuestion]) {
                 const q = room.questions[room.currentQuestion];
                 socket.emit('new_question', {
                     questionNumber: room.currentQuestion + 1,
@@ -104,7 +104,7 @@ io.on('connection', (socket) => {
         socket.emit('update_category', room.selectedCategory);
     });
 
-    // 3. Chơi lại (Khán giả chuyển thành Người chơi chính)
+    // 3. Chơi lại (Khán giả chuyển thành Người chơi)
     socket.on('back_to_lobby', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
@@ -121,7 +121,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. Chủ phòng đuổi người
+    // 4. Chủ phòng đuổi người (Kick)
     socket.on('kick_player', (data) => {
         const { roomCode, targetPlayerId } = data;
         const room = rooms[roomCode];
@@ -176,7 +176,7 @@ io.on('connection', (socket) => {
                 socket.join(roomCode);
                 socket.emit('rejoin_success', { roomCode, isHost: playerId === room.hostPlayerId, isSpectator: player.isSpectator });
                 
-                if (player.isSpectator && room.isPlaying && room.questions[room.currentQuestion]) {
+                if (player.isSpectator && room.isPlaying && room.questions && room.questions.length > 0 && room.questions[room.currentQuestion]) {
                     const q = room.questions[room.currentQuestion];
                     socket.emit('new_question', {
                         questionNumber: room.currentQuestion + 1,
