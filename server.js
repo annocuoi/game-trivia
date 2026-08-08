@@ -48,7 +48,7 @@ io.on('connection', (socket) => {
             correctCount: 0,
             answeredPlayers: new Set(),
             timer: null,
-            timeLeft: 10,
+            timeLeft: 25,
             isPlaying: false
         };
 
@@ -88,7 +88,6 @@ io.on('connection', (socket) => {
         if (player.isSpectator) {
             socket.emit('receive_chat', { name: "Hệ thống ⚠️", message: "Trận đấu đang diễn ra. Bạn tham gia với tư cách Khán Giả!" });
             
-            // KIỂM TRA AN TOÀN TRÁNH CRASH SERVER
             if (room.isPlaying && room.questions && room.questions.length > 0 && room.questions[room.currentQuestion]) {
                 const q = room.questions[room.currentQuestion];
                 socket.emit('new_question', {
@@ -121,7 +120,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. Chủ phòng đuổi người (Kick)
+    // 4. Chủ phòng đuổi người
     socket.on('kick_player', (data) => {
         const { roomCode, targetPlayerId } = data;
         const room = rooms[roomCode];
@@ -249,19 +248,23 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 11. Trả lời câu hỏi
+    // 11. Trả lời câu hỏi (Nhiều lần nếu sai - Đúng thì khóa & kiểm tra kết thúc sớm)
     socket.on('submit_answer', (data) => {
         const { roomCode, answer } = data;
         const room = rooms[roomCode];
-        if (!room || room.answeredPlayers.has(socket.id)) return;
+        if (!room) return;
 
         const player = room.players.find(p => p.socketId === socket.id);
         if (!player || player.isSpectator) return;
+
+        // Nếu người chơi này ĐÃ TRẢ LỜI ĐÚNG câu này rồi thì bỏ qua
+        if (room.answeredPlayers.has(socket.id)) return;
 
         const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
 
         if (cleanString(answer) === cleanString(currentQ.a)) {
+            // ĐÃ TRẢ LỜI ĐÚNG -> Đánh dấu không cho gõ nữa
             room.answeredPlayers.add(socket.id);
             room.correctCount++;
 
@@ -275,11 +278,13 @@ io.on('connection', (socket) => {
             socket.emit('answer_result', { correct: true, rank: room.correctCount, points });
             updateRoomLeaderboard(roomCode);
 
+            // NẾU TẤT CẢ NGƯỜI CHƠI CHÍNH ĐỀU ĐÃ TRẢ LỜI ĐÚNG -> KẾT THÚC CÂU NÀY NGAY
             const activePlayers = room.players.filter(p => !p.isSpectator && p.online);
             if (room.answeredPlayers.size >= activePlayers.length) {
                 finishQuestion(roomCode);
             }
         } else {
+            // NẾU TRẢ LỜI SAI -> Báo về client cho gõ tiếp
             socket.emit('answer_result', { correct: false });
         }
     });
@@ -307,7 +312,7 @@ io.on('connection', (socket) => {
 
         room.correctCount = 0;
         room.answeredPlayers.clear();
-        room.timeLeft = 30;
+        room.timeLeft = 25; // Đặt thời gian thành 25 giây
 
         const q = room.questions[room.currentQuestion];
         io.to(roomCode).emit('new_question', {

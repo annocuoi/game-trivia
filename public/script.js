@@ -248,7 +248,11 @@ socket.on('answer_result', (res) => {
         document.getElementById('submit-ans-btn').disabled = true;
     } else {
         feedback.style.color = 'red';
-        feedback.innerText = 'Sai rồi, thử lại xem!';
+        feedback.innerText = 'Sai rồi, hãy thử gõ đáp án khác!';
+        // Đảm bảo vẫn mở ô gõ và nút bấm để người chơi trả lời tiếp
+        document.getElementById('answer-input').disabled = false;
+        document.getElementById('submit-ans-btn').disabled = false;
+        document.getElementById('answer-input').focus();
     }
 });
 
