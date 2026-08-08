@@ -29,7 +29,8 @@ socket.on('rejoin_success', (data) => {
     document.getElementById('step-name-screen').style.display = 'none';
     document.getElementById('step-room-screen').style.display = 'none';
     
-    if (isGameActive) {
+    if (isSpectator) {
+        document.getElementById('lobby-screen').style.display = 'none';
         document.getElementById('game-screen').style.display = 'block';
     } else {
         document.getElementById('lobby-screen').style.display = 'block';
@@ -84,7 +85,6 @@ function enterLobby(roomCode, hostStatus, spectatorStatus) {
     document.getElementById('game-over').style.display = 'none';
     
     if (isSpectator) {
-        // NẾU LÀ KHÁN GIẢ KHI VÀO PHÒNG ĐANG CHƠI -> GIỮ NGUYÊN MÀN HÌNH GAME
         document.getElementById('lobby-screen').style.display = 'none';
         document.getElementById('game-screen').style.display = 'block';
     } else {
@@ -106,6 +106,17 @@ function enterLobby(roomCode, hostStatus, spectatorStatus) {
 }
 
 function updateRoleUI() {
+    const ansContainer = document.getElementById('answer-container');
+    const specMsg = document.getElementById('spectator-msg');
+
+    if (isSpectator) {
+        if (ansContainer) ansContainer.style.display = 'none';
+        if (specMsg) specMsg.style.display = 'block';
+    } else {
+        if (ansContainer) ansContainer.style.display = 'block';
+        if (specMsg) specMsg.style.display = 'none';
+    }
+
     if (isHost) {
         document.getElementById('host-controls').style.display = 'block';
         document.getElementById('player-controls').style.display = 'none';
@@ -260,7 +271,10 @@ socket.on('update_leaderboard', (players) => {
     document.getElementById('player-count-lobby').innerText = players.length;
 
     const me = players.find(p => p.playerId === playerId);
-    if (me) isSpectator = me.isSpectator;
+    if (me) {
+        isSpectator = me.isSpectator;
+        updateRoleUI();
+    }
 
     players.forEach((player) => {
         if (playerListLobby) {

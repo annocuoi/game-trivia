@@ -7,7 +7,6 @@ const questions = require('./questions');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Hàm chuẩn hóa chuỗi tiếng Việt (xử lý chữ hoa/thường, dấu cũ/mới, khoảng trắng thừa)
 function cleanString(str) {
     if (!str) return '';
     return str
@@ -59,7 +58,7 @@ io.on('connection', (socket) => {
         io.to(roomCode).emit('update_category', rooms[roomCode].selectedCategory);
     });
 
-    // 2. Vào phòng (Gán Chế độ Khán Giả nếu Game Đang Chơi)
+    // 2. Vào phòng
     socket.on('join_room', (data) => {
         const { roomCode, roomPassword, name, playerId } = data;
         const room = rooms[roomCode];
@@ -71,7 +70,6 @@ io.on('connection', (socket) => {
         let player = room.players.find(p => p.playerId === playerId);
         
         if (!player) {
-            // Nếu game đang diễn ra thì tự động chuyển thành KHÁN GIẢ
             const isSpectator = room.isPlaying;
             player = { socketId: socket.id, playerId, name, ready: isHost, score: 0, online: true, isSpectator };
             room.players.push(player);
@@ -89,20 +87,31 @@ io.on('connection', (socket) => {
         
         if (player.isSpectator) {
             socket.emit('receive_chat', { name: "Hệ thống ⚠️", message: "Trận đấu đang diễn ra. Bạn tham gia với tư cách Khán Giả!" });
+            
+            // NẾU LÀ KHÁN GIẢ VÀO GIỮA CHỪNG -> GỬI CÂU HỎI HIỆN TẠI NGAY LẬP TỨC
+            if (room.isPlaying && room.questions[room.currentQuestion]) {
+                const q = room.questions[room.currentQuestion];
+                socket.emit('new_question', {
+                    questionNumber: room.currentQuestion + 1,
+                    question: q.q,
+                    category: q.category
+                });
+                socket.emit('timer_update', room.timeLeft);
+            }
         }
 
         updateRoomLeaderboard(roomCode);
         socket.emit('update_category', room.selectedCategory);
     });
 
-    // 3. Chơi lại (Khán giả chuyển thành Người chơi chính ở ván mới)
+    // 3. Chơi lại (Khán giả chuyển thành Người chơi chính)
     socket.on('back_to_lobby', (data) => {
         const { roomCode, playerId } = data;
         const room = rooms[roomCode];
         if (room) {
             const player = room.players.find(p => p.playerId === playerId);
             if (player) {
-                player.isSpectator = false; // Chuyển thành người chơi chính
+                player.isSpectator = false;
                 if (player.playerId !== room.hostPlayerId) {
                     player.ready = false; 
                 }
@@ -112,7 +121,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // 4. Chủ phòng đuổi người (Kick linh hoạt)
+    // 4. Chủ phòng đuổi người
     socket.on('kick_player', (data) => {
         const { roomCode, targetPlayerId } = data;
         const room = rooms[roomCode];
@@ -121,7 +130,6 @@ io.on('connection', (socket) => {
             if (requester && requester.playerId === room.hostPlayerId) {
                 const target = room.players.find(p => p.playerId === targetPlayerId);
                 if (target && target.playerId !== room.hostPlayerId) {
-                    // Nếu ĐANG CHƠI mà Target KHÔNG PHẢI KHÁN GIẢ -> Chặn kick
                     if (room.isPlaying && !target.isSpectator) {
                         return socket.emit('start_error', 'Không thể kick người chơi chính khi ván đấu đang diễn ra!');
                     }
@@ -167,6 +175,17 @@ io.on('connection', (socket) => {
                 }
                 socket.join(roomCode);
                 socket.emit('rejoin_success', { roomCode, isHost: playerId === room.hostPlayerId, isSpectator: player.isSpectator });
+                
+                if (player.isSpectator && room.isPlaying && room.questions[room.currentQuestion]) {
+                    const q = room.questions[room.currentQuestion];
+                    socket.emit('new_question', {
+                        questionNumber: room.currentQuestion + 1,
+                        question: q.q,
+                        category: q.category
+                    });
+                    socket.emit('timer_update', room.timeLeft);
+                }
+
                 updateRoomLeaderboard(roomCode);
                 socket.emit('update_category', room.selectedCategory);
             }
@@ -225,19 +244,19 @@ io.on('connection', (socket) => {
             }
 
             room.questions = shuffleArray(filteredQuestions);
-            room.isPlaying = true; // Đánh dấu ván đấu bắt đầu
+            room.isPlaying = true;
             sendNextQuestion(roomCode);
         }
     });
 
-    // 11. Trả lời câu hỏi (Chỉ cho phép Người chơi chính)
+    // 11. Trả lời câu hỏi
     socket.on('submit_answer', (data) => {
         const { roomCode, answer } = data;
         const room = rooms[roomCode];
         if (!room || room.answeredPlayers.has(socket.id)) return;
 
         const player = room.players.find(p => p.socketId === socket.id);
-        if (!player || player.isSpectator) return; // Chặn khán giả gửi đáp án
+        if (!player || player.isSpectator) return;
 
         const currentQ = room.questions[room.currentQuestion];
         if (!currentQ) return;
@@ -323,7 +342,7 @@ io.on('connection', (socket) => {
             if (room.currentQuestion < Math.min(10, room.questions.length)) {
                 sendNextQuestion(roomCode);
             } else {
-                room.isPlaying = false; // Kết thúc ván đấu
+                room.isPlaying = false;
                 io.to(roomCode).emit('game_over', room.players);
             }
         }, 3000);
@@ -369,7 +388,7 @@ io.on('connection', (socket) => {
                     if (idx !== -1 && !room.players[idx].online) {
                         removePlayerFromRoom(code, player.playerId);
                     }
-                }, 120000); // Giữ kết nối trong 2 phút
+                }, 120000);
             }
         }
     });
