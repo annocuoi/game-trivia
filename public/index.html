@@ -8,7 +8,7 @@
     <style>
         * { box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 10px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
-        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; }
+        .card { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 100%; max-width: 420px; text-align: center; position: relative; }
         input, select { width: 100%; padding: 10px; margin: 6px 0; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; box-sizing: border-box; }
         button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; margin-top: 6px; font-weight: bold; }
         button:hover { opacity: 0.9; }
@@ -18,9 +18,10 @@
         .error { color: red; margin-top: 8px; font-size: 14px; font-weight: bold; }
         ul { list-style: none; padding: 0; text-align: left; }
         ul li { padding: 8px; border-bottom: 1px solid #eee; }
-        #chat-messages { height: 120px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 8px 0; font-size: 14px; }
+        .chat-box { height: 110px; border: 1px solid #ddd; overflow-y: auto; text-align: left; padding: 8px; background: #f9f9f9; border-radius: 6px; margin: 8px 0; font-size: 13px; }
         .cooldown { color: red; font-size: 13px; margin-top: 4px; }
         .category-box { background: #eef2ff; border: 1px solid #c7d2fe; padding: 10px; border-radius: 8px; margin: 10px 0; font-weight: bold; color: #3730a3; }
+        .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -94,23 +95,27 @@
 
         <hr style="margin: 15px 0;">
         <h3>Chat Tổng</h3>
-        <div id="chat-messages"></div>
+        <div id="chat-messages-lobby" class="chat-box"></div>
         <div style="display: flex; gap: 5px;">
-            <input type="text" id="chat-input" placeholder="Nhập tin nhắn..." style="margin: 0;" onkeypress="if(event.key==='Enter') sendChat()">
-            <button onclick="sendChat()" style="width: auto; margin: 0; padding: 10px 15px;">Gửi</button>
+            <input type="text" id="chat-input-lobby" placeholder="Nhập tin nhắn..." style="margin: 0;" onkeypress="if(event.key==='Enter') sendChat('lobby')">
+            <button onclick="sendChat('lobby')" style="width: auto; margin: 0; padding: 10px 15px;">Gửi</button>
         </div>
-        <div id="chat-cooldown" class="cooldown"></div>
+        <div id="chat-cooldown-lobby" class="cooldown"></div>
 
         <button class="btn-danger" onclick="leaveRoom()" style="margin-top: 15px;">Rời Phòng</button>
     </div>
 
     <!-- BƯỚC 4: MÀN HÌNH CHƠI GAME -->
     <div id="game-screen" class="card" style="display: none;">
-        <div style="font-size: 18px; font-weight: bold; color: #dc3545; margin-bottom: 10px;">
-            ⏳ Thời gian: <span id="time">10</span>s
+        <div class="header-bar">
+            <div style="font-size: 16px; font-weight: bold; color: #dc3545;">
+                ⏳ Thời gian: <span id="time">10</span>s
+            </div>
+            <button class="btn-danger" onclick="leaveRoom()" style="width: auto; padding: 6px 12px; font-size: 12px; margin: 0;">🚪 Rời Phòng</button>
         </div>
+
         <h3 id="q-number" style="margin: 5px 0;">Câu hỏi</h3>
-        <h2 id="q-text" style="color: #333; margin: 10px 0;">Nội dung câu hỏi</h2>
+        <h2 id="q-text" style="color: #333; margin: 10px 0; font-size: 18px;">Nội dung câu hỏi</h2>
 
         <div id="answer-container">
             <input type="text" id="answer-input" placeholder="Nhập đáp án...">
@@ -123,9 +128,19 @@
 
         <div id="feedback" style="margin-top: 10px; font-weight: bold;"></div>
 
-        <hr style="margin: 15px 0;">
-        <h3>Bảng Xếp Hạng</h3>
+        <hr style="margin: 12px 0;">
+        <h3 style="margin: 5px 0;">Bảng Xếp Hạng</h3>
         <ul id="score-list"></ul>
+
+        <!-- KHU VỰC CHAT TRONG KHI CHƠI GAME -->
+        <hr style="margin: 12px 0;">
+        <h3 style="margin: 5px 0;">💬 Chat Trong Game</h3>
+        <div id="chat-messages-game" class="chat-box"></div>
+        <div style="display: flex; gap: 5px;">
+            <input type="text" id="chat-input-game" placeholder="Nhập tin nhắn..." style="margin: 0;" onkeypress="if(event.key==='Enter') sendChat('game')">
+            <button onclick="sendChat('game')" style="width: auto; margin: 0; padding: 10px 15px;">Gửi</button>
+        </div>
+        <div id="chat-cooldown-game" class="cooldown"></div>
     </div>
 
     <!-- MÀN HÌNH KẾT THÚC -->

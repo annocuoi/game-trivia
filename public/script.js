@@ -11,6 +11,7 @@ let currentRoomCode = '';
 let isHost = false;
 let isReady = false;
 let isSpectator = false;
+let isGameActive = false;
 let lastChatTime = 0;
 
 socket.on('connect', () => {
@@ -27,9 +28,14 @@ socket.on('rejoin_success', (data) => {
 
     document.getElementById('step-name-screen').style.display = 'none';
     document.getElementById('step-room-screen').style.display = 'none';
-    document.getElementById('lobby-screen').style.display = 'block';
+    
+    if (isGameActive) {
+        document.getElementById('game-screen').style.display = 'block';
+    } else {
+        document.getElementById('lobby-screen').style.display = 'block';
+    }
+    
     document.getElementById('room-code-display').innerText = currentRoomCode;
-
     updateRoleUI();
 });
 
@@ -71,15 +77,21 @@ function enterLobby(roomCode, hostStatus, spectatorStatus) {
     isSpectator = spectatorStatus;
     sessionStorage.setItem('current_room_code', roomCode);
 
-    const chatMessages = document.getElementById('chat-messages');
-    if (chatMessages) {
-        chatMessages.innerHTML = '';
-    }
+    document.getElementById('chat-messages-lobby').innerHTML = '';
+    document.getElementById('chat-messages-game').innerHTML = '';
 
     document.getElementById('step-room-screen').style.display = 'none';
-    document.getElementById('lobby-screen').style.display = 'block';
     document.getElementById('game-over').style.display = 'none';
-    document.getElementById('game-screen').style.display = 'none';
+    
+    if (isSpectator) {
+        // NẾU LÀ KHÁN GIẢ KHI VÀO PHÒNG ĐANG CHƠI -> GIỮ NGUYÊN MÀN HÌNH GAME
+        document.getElementById('lobby-screen').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'block';
+    } else {
+        document.getElementById('lobby-screen').style.display = 'block';
+        document.getElementById('game-screen').style.display = 'none';
+    }
+
     document.getElementById('room-code-display').innerText = roomCode;
 
     if (!isHost) {
@@ -136,16 +148,16 @@ function toggleReady() {
     socket.emit('toggle_ready', { roomCode: currentRoomCode, playerId });
 }
 
-function sendChat() {
+function sendChat(type) {
     const now = Date.now();
-    const cooldownMsg = document.getElementById('chat-cooldown');
+    const cooldownMsg = document.getElementById(`chat-cooldown-${type}`);
 
     if (now - lastChatTime < 2000) {
         cooldownMsg.innerText = "Vui lòng đợi 2 giây!";
         return;
     }
 
-    const input = document.getElementById('chat-input');
+    const input = document.getElementById(`chat-input-${type}`);
     const message = input.value.trim();
     if (!message) return;
 
@@ -156,12 +168,16 @@ function sendChat() {
 }
 
 socket.on('receive_chat', (data) => {
-    const chatMessages = document.getElementById('chat-messages');
-    const p = document.createElement('p');
-    p.style.margin = "4px 0";
-    p.innerHTML = `<strong>${data.name}:</strong> ${data.message}`;
-    chatMessages.appendChild(p);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
+    ['lobby', 'game'].forEach(type => {
+        const chatBox = document.getElementById(`chat-messages-${type}`);
+        if (chatBox) {
+            const p = document.createElement('p');
+            p.style.margin = "4px 0";
+            p.innerHTML = `<strong>${data.name}:</strong> ${data.message}`;
+            chatBox.appendChild(p);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    });
 });
 
 function startGame() {
@@ -173,6 +189,7 @@ socket.on('start_error', (msg) => {
 });
 
 socket.on('new_question', (data) => {
+    isGameActive = true;
     document.getElementById('lobby-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
 
@@ -242,7 +259,6 @@ socket.on('update_leaderboard', (players) => {
 
     document.getElementById('player-count-lobby').innerText = players.length;
 
-    // Cập nhật trạng thái xem
     const me = players.find(p => p.playerId === playerId);
     if (me) isSpectator = me.isSpectator;
 
@@ -259,7 +275,6 @@ socket.on('update_leaderboard', (players) => {
 
             let html = `<span>${player.name}${statusText}</span>`;
             
-            // Hiển thị nút Kick (Chủ phòng không tự kick chính mình)
             if (isHost && player.playerId !== playerId) {
                 html += `<button onclick="kickPlayer('${player.playerId}')" style="width: auto; padding: 4px 8px; font-size: 12px; background: #dc3545; color: white; margin: 0; border-radius: 4px;">❌ Đuổi</button>`;
             }
@@ -290,6 +305,7 @@ socket.on('update_leaderboard', (players) => {
 });
 
 socket.on('game_over', (players) => {
+    isGameActive = false;
     document.getElementById('game-screen').style.display = 'none';
     document.getElementById('game-over').style.display = 'block';
 
@@ -306,10 +322,12 @@ function playAgain() {
 }
 
 socket.on('return_to_lobby', () => {
+    isGameActive = false;
+    isSpectator = false;
     document.getElementById('game-over').style.display = 'none';
+    document.getElementById('game-screen').style.display = 'none';
     document.getElementById('lobby-screen').style.display = 'block';
     
-    isSpectator = false; // Chuyển khán giả thành người chơi khi về sảnh
     updateRoleUI();
 
     if (!isHost) {
@@ -322,18 +340,21 @@ socket.on('return_to_lobby', () => {
 });
 
 function leaveRoom() { 
-    sessionStorage.removeItem('current_room_code');
-    socket.emit('leave_room', { roomCode: currentRoomCode, playerId });
-    
-    currentRoomCode = '';
-    isHost = false;
-    isReady = false;
-    isSpectator = false;
+    if (confirm("Bạn có chắc chắn muốn rời phòng?")) {
+        sessionStorage.removeItem('current_room_code');
+        socket.emit('leave_room', { roomCode: currentRoomCode, playerId });
+        
+        currentRoomCode = '';
+        isHost = false;
+        isReady = false;
+        isSpectator = false;
+        isGameActive = false;
 
-    document.getElementById('lobby-screen').style.display = 'none';
-    document.getElementById('game-over').style.display = 'none';
-    document.getElementById('game-screen').style.display = 'none';
-    document.getElementById('step-room-screen').style.display = 'block';
+        document.getElementById('lobby-screen').style.display = 'none';
+        document.getElementById('game-over').style.display = 'none';
+        document.getElementById('game-screen').style.display = 'none';
+        document.getElementById('step-room-screen').style.display = 'block';
+    }
 }
 
 function kickPlayer(targetPlayerId) {
